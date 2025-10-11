@@ -7,7 +7,98 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/* existing */
 model SetupCheck {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
+}
+
+/* existing */
+model Post {
+  id         String     @id @default(cuid())
+  sessionId  String?    // anonymous Phase-0 identity (from cookie)
+  body       String     @db.Text
+  createdAt  DateTime   @default(now())
+  visibility Visibility @default(PUBLIC)
+
+  // Step-3: relation to replies
+  replies    Reply[]
+
+  @@index([createdAt(sort: Desc)])
+}
+
+/* Step-3: replies */
+model Reply {
+  id         String     @id @default(cuid())
+  postId     String
+  post       Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  sessionId  String?
+  body       String     @db.Text
+  createdAt  DateTime   @default(now())
+  visibility Visibility @default(PUBLIC)
+
+  @@index([postId, createdAt(sort: Asc)])
+}
+
+/* Step-3: moderation reports */
+enum ReportTarget {
+  POST
+  REPLY
+}
+
+model ModerationReport {
+  id         String       @id @default(cuid())
+  sessionId  String?
+  targetType ReportTarget
+  targetId   String
+  reason     String?      @db.Text
+  createdAt  DateTime     @default(now())
+
+  @@index([createdAt(sort: Desc)])
+}
+
+/* Step-3 (public reputation): pseudonymous profile tied to sessionId */
+model SessionProfile {
+  id         String   @id @default(cuid())
+  sessionId  String   @unique
+  handle     String   @unique        // e.g., nab-4f7c
+  createdAt  DateTime @default(now())
+
+  // optional: displayName when accounts land
+}
+
+/* Step-3 (public reputation): ratings with 1 rater -> 1 target updatable
+   We add relations to sessionId for referential integrity. */
+model ReputationRating {
+  id              String   @id @default(cuid())
+
+  targetSessionId String
+  targetProfile   SessionProfile @relation("TargetRatings", fields: [targetSessionId], references: [sessionId], onDelete: Cascade)
+
+  raterSessionId  String
+  raterProfile    SessionProfile @relation("RaterRatings",  fields: [raterSessionId],  references: [sessionId], onDelete: Cascade)
+
+  value           Int      // 1..5
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([targetSessionId, raterSessionId], name: "one_rater_per_target")
+  @@index([targetSessionId, createdAt(sort: Desc)])
+}
+
+/* Step-3 (public reputation): cached aggregates for fast reads */
+model ReputationScore {
+  sessionId     String   @id
+  count         Int      @default(0)      // number of unique raters
+  sum           Int      @default(0)      // sum of raw 1..5 ratings
+  mean          Float    @default(0)      // sum / count (0 if count=0)
+  bayesianMean  Float    @default(0)      // smoothed mean
+  updatedAt     DateTime @updatedAt
+}
+
+/* existing */
+enum Visibility {
+  PUBLIC
+  FOLLOWERS
+  TRUSTED
 }

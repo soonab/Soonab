@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server'
-import { prisma } from '../../../lib/db' // adjust to '@/lib/db' if your alias works
+import { prisma } from '../../../lib/db'
 
 export async function GET() {
   try {
-    // simple DB ping
+    // Ping DB (Neon) to verify connectivity
     await prisma.$queryRaw`SELECT 1`
     return NextResponse.json({ ok: true, db: 'connected' })
-  } catch (e: any) {
+  } catch (err) {
     return NextResponse.json(
-      { ok: false, db: 'error', error: String(e?.message ?? e) },
+      { ok: false, error: 'db_unreachable', detail: (err as Error).message },
       { status: 500 }
     )
   }

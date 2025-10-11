@@ -7,27 +7,33 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/* existing */
+/**
+ * existing
+ */
 model SetupCheck {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 }
 
-/* existing */
+/**
+ * existing
+ */
 model Post {
   id         String     @id @default(cuid())
-  sessionId  String?    // anonymous Phase-0 identity (from cookie)
+  sessionId  String? // anonymous Phase-0 identity (from cookie)
   body       String     @db.Text
   createdAt  DateTime   @default(now())
   visibility Visibility @default(PUBLIC)
 
   // Step-3: relation to replies
-  replies    Reply[]
+  replies Reply[]
 
   @@index([createdAt(sort: Desc)])
 }
 
-/* Step-3: replies */
+/**
+ * Step-3: replies
+ */
 model Reply {
   id         String     @id @default(cuid())
   postId     String
@@ -40,7 +46,9 @@ model Reply {
   @@index([postId, createdAt(sort: Asc)])
 }
 
-/* Step-3: moderation reports */
+/**
+ * Step-3: moderation reports
+ */
 enum ReportTarget {
   POST
   REPLY
@@ -57,46 +65,80 @@ model ModerationReport {
   @@index([createdAt(sort: Desc)])
 }
 
-/* Step-3 (public reputation): pseudonymous profile tied to sessionId */
+/**
+ * Step-3 (public reputation): pseudonymous profile tied to sessionId
+ */
 model SessionProfile {
-  id         String   @id @default(cuid())
-  sessionId  String   @unique
-  handle     String   @unique        // e.g., nab-4f7c
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  handle    String   @unique // e.g., nab-4f7c
+  createdAt DateTime @default(now())
+
+  // Back-relations for named relations in ReputationRating
+  targetRatings ReputationRating[] @relation("TargetRatings")
+  raterRatings  ReputationRating[] @relation("RaterRatings")
 
   // optional: displayName when accounts land
 }
 
-/* Step-3 (public reputation): ratings with 1 rater -> 1 target updatable
-   We add relations to sessionId for referential integrity. */
+/**
+ * Step-3 (public reputation): ratings with 1 rater → 1 target updatable
+ */
 model ReputationRating {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
+  // Target (the person being rated)
   targetSessionId String
   targetProfile   SessionProfile @relation("TargetRatings", fields: [targetSessionId], references: [sessionId], onDelete: Cascade)
 
-  raterSessionId  String
-  raterProfile    SessionProfile @relation("RaterRatings",  fields: [raterSessionId],  references: [sessionId], onDelete: Cascade)
+  // Rater (the person giving the rating)
+  raterSessionId String
+  raterProfile   SessionProfile @relation("RaterRatings", fields: [raterSessionId], references: [sessionId], onDelete: Cascade)
 
-  value           Int      // 1..5
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  value     Int // 1..5
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([targetSessionId, raterSessionId], name: "one_rater_per_target")
+  // Keep the createdAt index (useful for simple recency lists)
+  @@index([targetSessionId, createdAt(sort: Desc)])
+  // New indices used by Step-4 cooldown/flag checks
+  @@index([raterSessionId, updatedAt], map: "idx_reputation_rater_updated")
+  @@index([targetSessionId, updatedAt], map: "idx_reputation_target_updated")
+}
+
+/**
+ * Step-3 (public reputation): cached aggregates for fast reads
+ */
+model ReputationScore {
+  sessionId    String   @id
+  count        Int      @default(0) // number of unique raters
+  sum          Int      @default(0) // sum of raw 1..5 ratings
+  mean         Float    @default(0) // sum / count (0 if count=0)
+  bayesianMean Float    @default(0) // smoothed mean
+  updatedAt    DateTime @updatedAt
+}
+
+/**
+ * Step-4: suspicion flags for potential brigading bursts
+ */
+model ReputationFlag {
+  id              String   @id @default(cuid())
+  targetSessionId String
+  windowStart     DateTime
+  windowEnd       DateTime
+  reason          String
+  count           Int
+  resolved        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
   @@index([targetSessionId, createdAt(sort: Desc)])
 }
 
-/* Step-3 (public reputation): cached aggregates for fast reads */
-model ReputationScore {
-  sessionId     String   @id
-  count         Int      @default(0)      // number of unique raters
-  sum           Int      @default(0)      // sum of raw 1..5 ratings
-  mean          Float    @default(0)      // sum / count (0 if count=0)
-  bayesianMean  Float    @default(0)      // smoothed mean
-  updatedAt     DateTime @updatedAt
-}
-
-/* existing */
+/**
+ * existing
+ */
 enum Visibility {
   PUBLIC
   FOLLOWERS

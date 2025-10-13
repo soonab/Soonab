@@ -1,48 +1,163 @@
-import { prisma } from '@/lib/db';
-import { getProfileByHandle } from '@/lib/identity';
-import { getScore, quotasForScore } from '@/lib/reputation';
-import BodyText from '@/components/BodyText';
-import ReportButton from '@/components/ReportButton';
-import ReplyComposer from '@/components/ReplyComposer';
-import ScoreBadge from '@/components/ScoreBadge';
+// src/app/s/[handle]/page.tsx
+import { prisma } from '@/lib/db'
+import { getCurrentProfileId } from '@/lib/auth'
+import BodyText from '@/components/BodyText'
+import ReplyComposer from '@/components/ReplyComposer'
+import ReportButton from '@/components/ReportButton'
+import VisibilityBadge from '@/components/VisibilityBadge'
+import RelationshipButtons from '@/components/RelationshipButtons'
+import type { Visibility } from '@prisma/client'
 
-export default async function ProfilePage({ params }: { params: { handle: string } }) {
-  const profile = await getProfileByHandle(params.handle);
-  if (!profile) return <main className="p-6">Not found</main>;
+export default async function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
+  // ✅ Next 15: params must be awaited
+  const { handle } = await params
+  const h = decodeURIComponent(handle).toLowerCase()
+  const viewerPid = await getCurrentProfileId()
 
-  const s = await getScore(profile.sessionId);
-  const q = quotasForScore(s.bayesianMean || 0);
+  // Prefer Profile (Step-5), fall back to legacy SessionProfile
+  const profile = await prisma.profile.findUnique({ where: { handle: h } })
+  if (profile) {
+    // Determine allowed visibilities for the viewer
+    let allowed: Visibility[] = ['PUBLIC']
+    const isOwner = viewerPid === profile.id
+
+    // Compute three relationships (when viewing someone else and signed in)
+    const [youFollowThem, youTrustThem, theyTrustYou] =
+      viewerPid && !isOwner
+        ? await Promise.all([
+            prisma.follow.findUnique({
+              where: {
+                followerProfileId_followingProfileId: {
+                  followerProfileId: viewerPid!,
+                  followingProfileId: profile.id,
+                },
+              },
+              select: { followerProfileId: true },
+            }).then(Boolean),
+            prisma.trust.findUnique({
+              where: {
+                trusterProfileId_trusteeProfileId: {
+                  trusterProfileId: viewerPid!,
+                  trusteeProfileId: profile.id,
+                },
+              },
+              select: { trusterProfileId: true },
+            }).then(Boolean),
+            prisma.trust.findUnique({
+              where: {
+                trusterProfileId_trusteeProfileId: {
+                  trusterProfileId: profile.id,
+                  trusteeProfileId: viewerPid!,
+                },
+              },
+              select: { trusterProfileId: true },
+            }).then(Boolean),
+          ])
+        : [false, false, false]
+
+    if (isOwner) {
+      allowed = ['PUBLIC', 'FOLLOWERS', 'TRUSTED']
+    } else {
+      if (youFollowThem) allowed.push('FOLLOWERS')
+      if (theyTrustYou)  allowed.push('TRUSTED') // only author can grant you access to TRUSTED
+    }
+
+    const posts = await prisma.post.findMany({
+      where: { profileId: profile.id, visibility: { in: allowed } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        // Keep replies simple for now: public-only
+        replies: {
+          where: { visibility: 'PUBLIC' },
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        },
+      },
+    })
+
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">@{profile.handle}</h1>
+          <RelationshipButtons
+            handle={profile.handle}
+            initialFollowing={youFollowThem}
+            initialYouTrustThem={youTrustThem}
+            theyTrustYou={theyTrustYou}
+            isOwner={isOwner}
+          />
+        </div>
+
+        <ul className="mt-6 space-y-6">
+          {posts.map((p) => (
+            <li key={p.id} className="rounded border p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs">
+                <span className="opacity-70">
+                  {new Date(p.createdAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
+                </span>
+                <VisibilityBadge v={p.visibility} />
+              </div>
+              <BodyText text={p.body} />
+              <div className="mt-2">
+                <ReportButton targetType="POST" targetId={p.id} />
+              </div>
+
+              {p.replies.length > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {p.replies.map((r) => (
+                    <li key={r.id} className="rounded border p-2">
+                      <BodyText text={r.body} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <ReplyComposer postId={p.id} />
+            </li>
+          ))}
+          {posts.length === 0 && <li className="text-sm text-gray-500">No posts yet.</li>}
+        </ul>
+      </main>
+    )
+  }
+
+  // Legacy: pseudonymous session handle → public-only
+  const session = await prisma.sessionProfile.findFirst({ where: { handle: h } })
+  if (!session) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-6">
+        <h1 className="text-xl font-semibold">@{h}</h1>
+        <p className="mt-6 text-sm text-gray-500">Profile not found.</p>
+      </main>
+    )
+  }
 
   const posts = await prisma.post.findMany({
-    where: { sessionId: profile.sessionId, visibility: 'PUBLIC' },
+    where: { sessionId: session.sessionId, visibility: 'PUBLIC' },
     orderBy: { createdAt: 'desc' },
     take: 50,
-    include: { replies: { where: { visibility: 'PUBLIC' }, orderBy: { createdAt: 'asc' } } },
-  });
+    include: {
+      replies: {
+        where: { visibility: 'PUBLIC' },
+        orderBy: { createdAt: 'asc' },
+        take: 50,
+      },
+    },
+  })
 
   return (
-    <main className="mx-auto max-w-2xl p-4">
-      <h1 className="text-xl font-semibold flex items-center gap-3">
-        @{profile.handle} <ScoreBadge bm={s.bayesianMean} count={s.count} />
-      </h1>
-      <p className="text-xs text-gray-600">Tier {q.tier}: {q.postsPerDay} posts/day, {q.repliesPerDay} replies/day.</p>
-      <ul className="mt-4 space-y-6">
-        {posts.map(p => (
+    <main className="mx-auto max-w-2xl px-4 py-6">
+      <h1 className="text-xl font-semibold">@{session.handle}</h1>
+      <ul className="mt-6 space-y-6">
+        {posts.map((p) => (
           <li key={p.id} className="rounded border p-3">
             <BodyText text={p.body} />
-            <div className="mt-2 text-xs text-gray-500">
-              {new Date(p.createdAt).toISOString().replace('T',' ').slice(0,19)} UTC
-            </div>
-            <div className="mt-2"><ReportButton targetType="POST" targetId={p.id} /></div>
             {p.replies.length > 0 && (
               <ul className="mt-3 space-y-2">
-                {p.replies.map(r => (
-                  <li key={r.id} className="rounded border p-2 bg-black/5">
+                {p.replies.map((r) => (
+                  <li key={r.id} className="rounded border p-2">
                     <BodyText text={r.body} />
-                    <div className="mt-1 text-[11px] text-gray-500">
-                      {new Date(r.createdAt).toISOString().replace('T',' ').slice(0,19)} UTC
-                    </div>
-                    <div className="mt-1"><ReportButton targetType="REPLY" targetId={r.id} /></div>
                   </li>
                 ))}
               </ul>
@@ -50,7 +165,8 @@ export default async function ProfilePage({ params }: { params: { handle: string
             <ReplyComposer postId={p.id} />
           </li>
         ))}
+        {posts.length === 0 && <li className="text-sm text-gray-500">No posts yet.</li>}
       </ul>
     </main>
-  );
+  )
 }

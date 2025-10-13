@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,7 +10,61 @@ datasource db {
 }
 
 /**
- * existing
+ * Users & Profiles (Step-5)
+ */
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  createdAt DateTime  @default(now())
+  profiles  Profile[]
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handle      String   @unique
+  displayName String?
+  bio         String?  @db.Text
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  posts   Post[]
+  replies Reply[]
+
+  // Ratings (profile-based)
+  targetProfileRatings ReputationRating[] @relation("TargetProfileRatings")
+  raterProfileRatings  ReputationRating[] @relation("RaterProfileRatings")
+
+  // Cached score (profile-based; optional)
+  score ReputationScore?
+
+  // --- Step-6: audience edges (back-relations) ---
+  // Following: I (follower) -> they (following)
+  followingConnections Follow[] @relation("follows_follower")
+  followerConnections  Follow[] @relation("follows_following")
+
+  // Trust: I (truster/author) -> they (trustee/viewer)
+  trustGiven    Trust[] @relation("trusts_truster")
+  trustReceived Trust[] @relation("trusts_trustee")
+}
+
+/**
+ * Magic link tokens
+ */
+model MagicLinkToken {
+  id        String    @id @default(cuid())
+  email     String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email, expiresAt])
+}
+
+/**
+ * Setup marker
  */
 model SetupCheck {
   id        String   @id @default(cuid())
@@ -16,38 +72,53 @@ model SetupCheck {
 }
 
 /**
- * existing
+ * Posts & Replies
  */
+enum Visibility {
+  PUBLIC
+  FOLLOWERS
+  TRUSTED
+}
+
 model Post {
-  id         String     @id @default(cuid())
-  sessionId  String? // anonymous Phase-0 identity (from cookie)
+  id String @id @default(cuid())
+
+  // Legacy anonymous identity (pre-accounts)
+  sessionId String?
+
+  // New ownership (Step-5)
+  profileId String?
+  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+
   body       String     @db.Text
   createdAt  DateTime   @default(now())
   visibility Visibility @default(PUBLIC)
 
-  // Step-3: relation to replies
   replies Reply[]
 
   @@index([createdAt(sort: Desc)])
+  @@index([profileId, createdAt(sort: Desc)])
 }
 
-/**
- * Step-3: replies
- */
 model Reply {
-  id         String     @id @default(cuid())
-  postId     String
-  post       Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
-  sessionId  String?
+  id     String @id @default(cuid())
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  sessionId String?
+  profileId String?
+  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+
   body       String     @db.Text
   createdAt  DateTime   @default(now())
   visibility Visibility @default(PUBLIC)
 
   @@index([postId, createdAt(sort: Asc)])
+  @@index([profileId, createdAt(sort: Desc)])
 }
 
 /**
- * Step-3: moderation reports
+ * Moderation
  */
 enum ReportTarget {
   POST
@@ -66,61 +137,72 @@ model ModerationReport {
 }
 
 /**
- * Step-3 (public reputation): pseudonymous profile tied to sessionId
+ * Pseudonymous session profile (pre-accounts)
  */
 model SessionProfile {
   id        String   @id @default(cuid())
   sessionId String   @unique
-  handle    String   @unique // e.g., nab-4f7c
+  handle    String   @unique
   createdAt DateTime @default(now())
 
-  // Back-relations for named relations in ReputationRating
+  // Back-relations for session-based ratings
   targetRatings ReputationRating[] @relation("TargetRatings")
   raterRatings  ReputationRating[] @relation("RaterRatings")
-
-  // optional: displayName when accounts land
 }
 
 /**
- * Step-3 (public reputation): ratings with 1 rater → 1 target updatable
+ * Ratings (support session- and profile-based IDs)
  */
 model ReputationRating {
   id String @id @default(cuid())
 
-  // Target (the person being rated)
-  targetSessionId String
-  targetProfile   SessionProfile @relation("TargetRatings", fields: [targetSessionId], references: [sessionId], onDelete: Cascade)
+  // Session-based (legacy)
+  targetSessionId String?
+  targetSession   SessionProfile? @relation("TargetRatings", fields: [targetSessionId], references: [sessionId], onDelete: SetNull)
 
-  // Rater (the person giving the rating)
-  raterSessionId String
-  raterProfile   SessionProfile @relation("RaterRatings", fields: [raterSessionId], references: [sessionId], onDelete: Cascade)
+  raterSessionId String?
+  raterSession   SessionProfile? @relation("RaterRatings", fields: [raterSessionId], references: [sessionId], onDelete: SetNull)
 
-  value     Int // 1..5
+  // Profile-based (Step-5)
+  targetProfileId String?
+  targetProfile   Profile? @relation("TargetProfileRatings", fields: [targetProfileId], references: [id], onDelete: SetNull)
+
+  raterProfileId String?
+  raterProfile   Profile? @relation("RaterProfileRatings", fields: [raterProfileId], references: [id], onDelete: SetNull)
+
+  value     Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([targetSessionId, raterSessionId], name: "one_rater_per_target")
-  // Keep the createdAt index (useful for simple recency lists)
-  @@index([targetSessionId, createdAt(sort: Desc)])
-  // New indices used by Step-4 cooldown/flag checks
+  // Uniques
+  @@unique([targetSessionId, raterSessionId], name: "one_rater_per_target_session")
+  @@unique([targetProfileId, raterProfileId], name: "one_rater_per_target_profile")
+  // Indices used by Step-4 cooldown/flags
   @@index([raterSessionId, updatedAt], map: "idx_reputation_rater_updated")
   @@index([targetSessionId, updatedAt], map: "idx_reputation_target_updated")
+  @@index([raterProfileId, updatedAt], map: "idx_reputation_rater_profile_updated")
+  @@index([targetProfileId, updatedAt], map: "idx_reputation_target_profile_updated")
 }
 
 /**
- * Step-3 (public reputation): cached aggregates for fast reads
+ * Cached aggregates
  */
 model ReputationScore {
-  sessionId    String   @id
-  count        Int      @default(0) // number of unique raters
-  sum          Int      @default(0) // sum of raw 1..5 ratings
-  mean         Float    @default(0) // sum / count (0 if count=0)
-  bayesianMean Float    @default(0) // smoothed mean
+  // Keep session-based id for backward compatibility
+  sessionId String   @id
+  // Step-5: optionally also key by profile
+  profileId String?  @unique
+  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+
+  count        Int      @default(0)
+  sum          Int      @default(0)
+  mean         Float    @default(0)
+  bayesianMean Float    @default(0)
   updatedAt    DateTime @updatedAt
 }
 
 /**
- * Step-4: suspicion flags for potential brigading bursts
+ * Step-4 suspicion flags
  */
 model ReputationFlag {
   id              String   @id @default(cuid())
@@ -137,10 +219,32 @@ model ReputationFlag {
 }
 
 /**
- * existing
+ * --- Step-6: audience edges ---
+ * Follow: follower -> following
+ * Trust:  truster(author) -> trustee(viewer)
  */
-enum Visibility {
-  PUBLIC
-  FOLLOWERS
-  TRUSTED
+model Follow {
+  followerProfileId  String
+  followingProfileId String
+  createdAt          DateTime @default(now())
+
+  follower  Profile @relation("follows_follower", fields: [followerProfileId], references: [id], onDelete: Cascade)
+  following Profile @relation("follows_following", fields: [followingProfileId], references: [id], onDelete: Cascade)
+
+  @@id([followerProfileId, followingProfileId])
+  @@index([followingProfileId, followerProfileId])
+  @@index([createdAt(sort: Desc)])
+}
+
+model Trust {
+  trusterProfileId String
+  trusteeProfileId String
+  createdAt        DateTime @default(now())
+
+  truster Profile @relation("trusts_truster", fields: [trusterProfileId], references: [id], onDelete: Cascade)
+  trustee Profile @relation("trusts_trustee", fields: [trusteeProfileId], references: [id], onDelete: Cascade)
+
+  @@id([trusterProfileId, trusteeProfileId])
+  @@index([trusteeProfileId, trusterProfileId])
+  @@index([createdAt(sort: Desc)])
 }

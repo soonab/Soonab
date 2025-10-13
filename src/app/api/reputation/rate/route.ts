@@ -1,87 +1,135 @@
+// src/app/api/reputation/rate/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/db';
-import { ensureSessionProfile, getProfileByHandle } from '@/lib/identity';
-import { recomputeScore, maybeFlagBrigade } from '@/lib/reputation';
+import { ensureSessionProfile } from '@/lib/identity';
+import { getCurrentProfileId } from '@/lib/auth';
+import { recomputeScore } from '@/lib/reputation';
+import { recomputeScoreForProfile } from '@/lib/reputation';
 
 const REQUIRE_INTERACTION_DAYS = Number(process.env.REP_REQUIRE_INTERACTION_DAYS ?? 7);
-const PAIR_CD_HOURS = Number(process.env.REP_RATING_PAIR_COOLDOWN_HOURS ?? 24);
-const GLOBAL_PER_HR = Number(process.env.REP_RATING_GLOBAL_PER_HOUR ?? 8);
 
-async function interacted(raterSid: string, targetSid: string) {
-  const since = new Date(Date.now() - REQUIRE_INTERACTION_DAYS * 86400000);
-  const count = await prisma.reply.count({
-    where: { sessionId: raterSid, createdAt: { gte: since }, post: { sessionId: targetSid } },
-  });
-  return count > 0;
+function daysAgo(d: number) {
+  return new Date(Date.now() - d * 86400000);
 }
 
 export async function POST(req: NextRequest) {
+  // --- Identify rater (session + profile) ---
   const jar = await cookies();
   let sid = jar.get('sid')?.value;
-  if (!sid) sid = randomUUID();
+  let setSid = false;
+  if (!sid) { sid = randomUUID(); setSid = true; }
+  const pid = await getCurrentProfileId(); // may be null
 
-  const { targetHandle, value } = await req.json();
-  const val = Number(value);
-  if (!targetHandle || !(val >= 1 && val <= 5))
-    return NextResponse.json({ ok: false, error: 'targetHandle and value(1..5) required' }, { status: 400 });
+  // --- Parse body ---
+  let body: any;
+  try { body = await req.json(); } catch { body = {}; }
+  const targetHandle = String(body?.targetHandle || '').trim().toLowerCase();
+  const val = Number(body?.value);
 
-  const target = await getProfileByHandle(targetHandle);
-  if (!target) return NextResponse.json({ ok: false, error: 'Target not found' }, { status: 404 });
-  if (target.sessionId === sid)
+  if (!targetHandle || !(val >= 1 && val <= 5)) {
+    return NextResponse.json(
+      { ok: false, error: 'targetHandle and value(1..5) required' },
+      { status: 400 }
+    );
+  }
+
+  // --- Resolve target by handle (Profile preferred, Session fallback) ---
+  const targetProfile = await prisma.profile.findUnique({ where: { handle: targetHandle } });
+  const targetSession = await prisma.sessionProfile.findFirst({ where: { handle: targetHandle } });
+
+  if (!targetProfile && !targetSession) {
+    return NextResponse.json({ ok: false, error: 'Target not found' }, { status: 404 });
+  }
+
+  const targetProfileId = targetProfile?.id ?? null;
+  const targetSessionId = targetSession?.sessionId ?? null;
+
+  // --- No self-rating ---
+  if ((pid && targetProfileId && pid === targetProfileId) ||
+      (sid && targetSessionId && sid === targetSessionId)) {
     return NextResponse.json({ ok: false, error: 'You cannot rate yourself' }, { status: 400 });
+  }
 
-  // Identity and optional interaction gate
+  // --- Ensure rater has a SessionProfile (legacy path) ---
   await ensureSessionProfile(sid);
+
+  // --- Interaction required? Check replies across both identities ---
   if (REQUIRE_INTERACTION_DAYS > 0) {
-    const ok = await interacted(sid, target.sessionId);
-    if (!ok) return NextResponse.json({ ok: false, error: 'Interact (reply) before rating' }, { status: 403 });
+    const since = daysAgo(REQUIRE_INTERACTION_DAYS);
+    const orClauses: any[] = [];
+    if (pid && targetProfileId) orClauses.push({ profileId: pid, post: { profileId: targetProfileId } });
+    if (pid && targetSessionId) orClauses.push({ profileId: pid, post: { sessionId: targetSessionId } });
+    if (sid && targetProfileId) orClauses.push({ sessionId: sid, post: { profileId: targetProfileId } });
+    if (sid && targetSessionId) orClauses.push({ sessionId: sid, post: { sessionId: targetSessionId } });
+
+    const count = orClauses.length
+      ? await prisma.reply.count({ where: { createdAt: { gte: since }, OR: orClauses } })
+      : 0;
+
+    if (count === 0) {
+      return NextResponse.json({ ok: false, error: 'Interact (reply) before rating' }, { status: 403 });
+    }
   }
 
-  // Pair cooldown: 1/day for rater->target
-  if (PAIR_CD_HOURS > 0) {
-    const since = new Date(Date.now() - PAIR_CD_HOURS * 3600_000);
-    const recentPair = await prisma.reputationRating.findFirst({
-      where: {
-        raterSessionId: sid,
-        targetSessionId: target.sessionId,
-        updatedAt: { gte: since },
+  // --- Upsert rating row (merge by whichever unique exists) ---
+  const existing = await prisma.reputationRating.findFirst({
+    where: {
+      OR: [
+        pid && targetProfileId ? { raterProfileId: pid, targetProfileId } : undefined,
+        sid && targetSessionId ? { raterSessionId: sid, targetSessionId } : undefined,
+      ].filter(Boolean) as any[],
+    },
+  });
+
+  let rating;
+  if (existing) {
+    rating = await prisma.reputationRating.update({
+      where: { id: existing.id },
+      data: {
+        value: val,
+        // Fill in whichever identifiers we now have (so a single row holds both)
+        raterProfileId: pid ?? existing.raterProfileId,
+        targetProfileId: targetProfileId ?? existing.targetProfileId,
+        raterSessionId: sid ?? existing.raterSessionId,
+        targetSessionId: targetSessionId ?? existing.targetSessionId,
       },
-      select: { updatedAt: true },
     });
-    if (recentPair) {
-      return NextResponse.json({ ok: false, error: 'You can update this rating once per day' }, { status: 429 });
-    }
+  } else {
+    rating = await prisma.reputationRating.create({
+      data: {
+        value: val,
+        raterProfileId: pid ?? null,
+        targetProfileId: targetProfileId ?? null,
+        raterSessionId: sid ?? null,
+        targetSessionId: targetSessionId ?? null,
+      },
+    });
   }
 
-  // Global cooldown: N/hour across all targets
-  if (GLOBAL_PER_HR > 0) {
-    const since = new Date(Date.now() - 3600_000);
-    const updated = await prisma.reputationRating.count({
-      where: { raterSessionId: sid, updatedAt: { gte: since } },
-    });
-    if (updated >= GLOBAL_PER_HR) {
-      return NextResponse.json({ ok: false, error: 'Rating cooldown active' }, { status: 429 });
+  // --- Recompute target score (session-based if possible, else profile-based) ---
+  let score = null;
+  if (targetSessionId) {
+    score = await recomputeScore(targetSessionId);
+    // Best-effort: link the score row to profileId if we have it
+    if (targetProfileId && score && !score.profileId) {
+      try { await prisma.reputationScore.update({ where: { sessionId: targetSessionId }, data: { profileId: targetProfileId } }); } catch {}
     }
+  } else if (targetProfileId) {
+    score = await recomputeScoreForProfile(targetProfileId);
   }
 
-  // Upsert rating
-  await prisma.reputationRating.upsert({
-    where: { one_rater_per_target: { targetSessionId: target.sessionId, raterSessionId: sid } },
-    update: { value: val },
-    create: { targetSessionId: target.sessionId, raterSessionId: sid, value: val },
-  });
-
-  // Recompute and maybe flag
-  const score = await recomputeScore(target.sessionId);
-  await maybeFlagBrigade(target.sessionId);
-
-  const res = NextResponse.json({ ok: true, score });
-  res.cookies.set('sid', sid, {
-    httpOnly: true, sameSite: 'lax', path: '/',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 60 * 60 * 24 * 365,
-  });
+  // --- Response & cookie ---
+  const res = NextResponse.json({ ok: true, ratingId: rating.id, score });
+  if (setSid) {
+    res.cookies.set('sid', sid, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  }
   return res;
 }

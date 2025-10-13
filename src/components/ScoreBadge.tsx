@@ -5,7 +5,6 @@ export default function ScoreBadge({ bm, count }:{ bm?: number|null, count?: num
     <span className="inline-flex items-center gap-1 text-xs rounded px-2 py-0.5 border">
       <span aria-hidden>★</span>
       <span>{txt}</span>
-      <span className="opacity-60">({count ?? 0})</span>
     </span>
   );
 }

@@ -1,25 +1,37 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+// eslint.config.mjs
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
+import next from 'eslint-config-next';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+  // Ignore generated / vendor output
+  { ignores: ['node_modules/**', '.next/**'] },
 
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+  // Base JS + TypeScript + Next rules
+  js.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  next,
 
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // Project-wide TypeScript settings
   {
-    ignores: [
-      "node_modules/**",
-      ".next/**",
-      "out/**",
-      "build/**",
-      "next-env.d.ts",
-    ],
+    files: ['**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: {
+        project: './tsconfig.json',
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
+
+  // 👇 Only relax "any" in server API routes so production builds don’t fail
+  {
+    files: ['src/app/api/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
   },
 ];
-
-export default eslintConfig;

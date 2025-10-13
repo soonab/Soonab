@@ -47,6 +47,9 @@ model Profile {
   // Trust: I (truster/author) -> they (trustee/viewer)
   trustGiven    Trust[] @relation("trusts_truster")
   trustReceived Trust[] @relation("trusts_trustee")
+
+  // --- Step-7: penalties (back-relation) ---
+  penalties ProfilePenalty[]
 }
 
 /**
@@ -72,7 +75,7 @@ model SetupCheck {
 }
 
 /**
- * Posts & Replies
+ * Visibility & Content State
  */
 enum Visibility {
   PUBLIC
@@ -80,6 +83,15 @@ enum Visibility {
   TRUSTED
 }
 
+enum ContentState {
+  ACTIVE
+  HIDDEN
+  REMOVED
+}
+
+/**
+ * Posts & Replies
+ */
 model Post {
   id String @id @default(cuid())
 
@@ -94,10 +106,14 @@ model Post {
   createdAt  DateTime   @default(now())
   visibility Visibility @default(PUBLIC)
 
+  // Step-7: moderation content state
+  state ContentState @default(ACTIVE)
+
   replies Reply[]
 
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
+  @@index([state, createdAt(sort: Desc)])
 }
 
 model Reply {
@@ -113,12 +129,16 @@ model Reply {
   createdAt  DateTime   @default(now())
   visibility Visibility @default(PUBLIC)
 
+  // Step-7: moderation content state
+  state ContentState @default(ACTIVE)
+
   @@index([postId, createdAt(sort: Asc)])
   @@index([profileId, createdAt(sort: Desc)])
+  @@index([state, createdAt(sort: Desc)])
 }
 
 /**
- * Moderation
+ * Moderation — reports, actions, penalties
  */
 enum ReportTarget {
   POST
@@ -134,6 +154,56 @@ model ModerationReport {
   createdAt  DateTime     @default(now())
 
   @@index([createdAt(sort: Desc)])
+}
+
+// Action types (audit log)
+enum ModerationActionType {
+  HIDE
+  UNHIDE
+  REMOVE
+  BLOCK_PROFILE
+  UNBLOCK_PROFILE
+}
+
+// Targets for actions (includes PROFILE for clarity)
+enum ModerationTarget {
+  POST
+  REPLY
+  PROFILE
+}
+
+model ModerationAction {
+  id         String               @id @default(cuid())
+  actor      String // e.g. 'admin:console' (do not store secrets)
+  targetType ModerationTarget
+  targetId   String? // null for PROFILE actions if using profileId
+  profileId  String? // set when acting on a profile
+  action     ModerationActionType
+  reason     String?
+  createdAt  DateTime             @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([targetType, targetId, createdAt(sort: Desc)])
+}
+
+// Posting penalties
+enum PenaltyKind {
+  TEMP_POST_BAN
+  PERMA_BAN
+}
+
+model ProfilePenalty {
+  id         String      @id @default(cuid())
+  profileId  String
+  profile    Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  kind       PenaltyKind
+  until      DateTime? // null for permanent
+  reason     String?
+  createdAt  DateTime    @default(now())
+  resolvedAt DateTime?
+
+  @@index([profileId, createdAt(sort: Desc)])
+  @@index([until])
 }
 
 /**

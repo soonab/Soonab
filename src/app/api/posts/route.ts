@@ -6,6 +6,7 @@ import { Visibility } from '@prisma/client';
 import { canCreatePost } from '@/lib/limits';
 import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
+import { hasActivePostingPenalty } from '@/lib/moderation';
 
 const POST_MAX = 500;
 
@@ -20,7 +21,8 @@ function extractHashtags(text: string): string[] {
 export async function GET(req: NextRequest) {
   const limit = Math.min(Number(req.nextUrl.searchParams.get('limit')) || 50, 100);
   const posts = await prisma.post.findMany({
-    where: { visibility: 'PUBLIC' },
+    // Home feed shows PUBLIC only, newest-first
+    where: { visibility: 'PUBLIC', state: 'ACTIVE' },
     orderBy: { createdAt: 'desc' },
     take: limit,
   });
@@ -29,26 +31,43 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   let payload: any;
-  try { payload = await req.json(); } catch { return NextResponse.json({ ok: false, error: 'Invalid JSON' }, { status: 400 }); }
+  try {
+    payload = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid JSON' }, { status: 400 });
+  }
 
   const body = (payload?.body ?? '').toString().trim();
   if (!body) return NextResponse.json({ ok: false, error: 'Body is required' }, { status: 400 });
   if (body.length > POST_MAX) return NextResponse.json({ ok: false, error: `Too long (max ${POST_MAX})` }, { status: 400 });
 
-  const jar = await cookies();                             // ✅ Next 15
+  const jar = await cookies(); // ✅ Next 15 dynamic API
   let sid = jar.get('sid')?.value;
   let setCookie = false;
   if (!sid) { sid = randomUUID(); setCookie = true; }
 
   await ensureSessionProfile(sid);
-  const profileId = await getCurrentProfileId();           // may be null
+  const profileId = await getCurrentProfileId(); // may be null
 
+  // Quota gate
   const gate = await canCreatePost(sid, profileId);
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
 
+  // Moderation gate: block if profile has an active posting penalty
+  if (await hasActivePostingPenalty(profileId)) {
+    return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
+  }
+
+  // Honour composer visibility (PUBLIC/FOLLOWERS/TRUSTED); default to PUBLIC
+  const vRaw = String(payload?.visibility || 'PUBLIC').toUpperCase();
+  const visibility: Visibility =
+    (['PUBLIC', 'FOLLOWERS', 'TRUSTED'] as const).includes(vRaw as any)
+      ? (vRaw as Visibility)
+      : 'PUBLIC';
+
   const hashtags = extractHashtags(body);
   const created = await prisma.post.create({
-    data: { sessionId: sid, profileId, body, visibility: Visibility.PUBLIC },
+    data: { sessionId: sid, profileId, body, visibility },
   });
 
   const res = NextResponse.json({ ok: true, post: created, hashtags, quota: gate.quota ?? null });

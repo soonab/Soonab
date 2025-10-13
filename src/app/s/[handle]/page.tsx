@@ -77,8 +77,8 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
     })
 
     return (
-      <main className="mx-auto max-w-2xl px-4 py-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-6">
+        <div className="glass flex items-center justify-between px-4 py-3">
           <h1 className="text-xl font-semibold">@{profile.handle}</h1>
           <RelationshipButtons
             handle={profile.handle}
@@ -89,9 +89,9 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
           />
         </div>
 
-        <ul className="mt-6 space-y-6">
+        <ul className="space-y-6">
           {posts.map((p) => (
-            <li key={p.id} className="rounded border p-3">
+            <li key={p.id} className="feed-card">
               <div className="mb-1 flex items-center gap-2 text-xs">
                 <span className="opacity-70">
                   {new Date(p.createdAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
@@ -106,7 +106,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
               {p.replies.length > 0 && (
                 <ul className="mt-3 space-y-2">
                   {p.replies.map((r) => (
-                    <li key={r.id} className="rounded border p-2">
+                    <li key={r.id} className="card">
                       <BodyText text={r.body} />
                     </li>
                   ))}
@@ -118,7 +118,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
           ))}
           {posts.length === 0 && <li className="text-sm text-gray-500">No posts yet.</li>}
         </ul>
-      </main>
+      </div>
     )
   }
 
@@ -126,10 +126,10 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
   const session = await prisma.sessionProfile.findFirst({ where: { handle: h } })
   if (!session) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-6">
+      <div className="card">
         <h1 className="text-xl font-semibold">@{h}</h1>
-        <p className="mt-6 text-sm text-gray-500">Profile not found.</p>
-      </main>
+        <p className="mt-4 text-sm text-gray-400">Profile not found.</p>
+      </div>
     )
   }
 
@@ -147,16 +147,18 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
   })
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6">
-      <h1 className="text-xl font-semibold">@{session.handle}</h1>
-      <ul className="mt-6 space-y-6">
+    <div className="space-y-6">
+      <div className="glass px-4 py-3">
+        <h1 className="text-xl font-semibold">@{session.handle}</h1>
+      </div>
+      <ul className="space-y-6">
         {posts.map((p) => (
-          <li key={p.id} className="rounded border p-3">
+          <li key={p.id} className="feed-card">
             <BodyText text={p.body} />
             {p.replies.length > 0 && (
               <ul className="mt-3 space-y-2">
                 {p.replies.map((r) => (
-                  <li key={r.id} className="rounded border p-2">
+                  <li key={r.id} className="card">
                     <BodyText text={r.body} />
                   </li>
                 ))}
@@ -167,6 +169,6 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
         ))}
         {posts.length === 0 && <li className="text-sm text-gray-500">No posts yet.</li>}
       </ul>
-    </main>
+    </div>
   )
 }

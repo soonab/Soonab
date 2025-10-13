@@ -1,0 +1,259 @@
+openapi: 3.1.0
+info:
+  title: Soonab API
+  version: 1.0.0
+  description: >
+    Chronological, no-ranking social MVP. Public endpoints for reading/creating
+    posts and replies, reporting content; key-gated admin moderation actions.
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev
+  - url: https://{host}
+    description: Deployed host
+    variables:
+      host:
+        default: example.com
+
+tags:
+  - name: Posts
+  - name: Replies
+  - name: Reports
+  - name: Admin
+
+paths:
+  /api/posts:
+    get:
+      tags: [Posts]
+      summary: Get recent public posts (chronological)
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  posts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Post' }
+    post:
+      tags: [Posts]
+      summary: Create a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  maxLength: 500
+                visibility:
+                  $ref: '#/components/schemas/Visibility'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  post: { $ref: '#/components/schemas/Post' }
+                  hashtags:
+                    type: array
+                    items: { type: string }
+                  quota:
+                    nullable: true
+                    oneOf:
+                      - type: integer
+                      - type: 'null'
+        '400': { description: Bad request }
+        '403': { description: Forbidden (moderation penalty) }
+        '429': { description: Rate or quota limit }
+
+  /api/posts/{id}/replies:
+    post:
+      tags: [Replies]
+      summary: Create a reply (PUBLIC only for now)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  reply: { $ref: '#/components/schemas/Reply' }
+                  quota:
+                    nullable: true
+                    oneOf:
+                      - type: integer
+                      - type: 'null'
+        '400': { description: Bad request }
+        '403': { description: Forbidden (moderation penalty) }
+        '404': { description: Parent post not found }
+        '429': { description: Rate or quota limit }
+
+  /api/report:
+    post:
+      tags: [Reports]
+      summary: Submit a moderation report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType, targetId]
+              properties:
+                targetType: { $ref: '#/components/schemas/ReportTarget' }
+                targetId: { type: string }
+                reason: { type: string }
+      responses:
+        '200': { description: Accepted }
+        '400': { description: Bad request }
+
+  /api/admin/moderation/action:
+    post:
+      tags: [Admin]
+      summary: Admin — moderation action (hide/unhide/remove/block/unblock)
+      parameters:
+        - in: query
+          name: key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  $ref: '#/components/schemas/ModerationActionType'
+                targetType:
+                  $ref: '#/components/schemas/ModerationTarget'
+                targetId:
+                  type: string
+                  nullable: true
+                profileHandle:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '200': { description: OK }
+        '400': { description: Bad request }
+        '403': { description: Forbidden (missing/invalid admin key) }
+
+components:
+  schemas:
+    # --- Enums ---
+    Visibility:
+      type: string
+      enum: [PUBLIC, FOLLOWERS, TRUSTED]
+
+    ContentState:
+      type: string
+      enum: [ACTIVE, HIDDEN, REMOVED]
+
+    ReportTarget:
+      type: string
+      enum: [POST, REPLY]
+
+    ModerationActionType:
+      type: string
+      enum: [HIDE, UNHIDE, REMOVE, BLOCK_PROFILE, UNBLOCK_PROFILE]
+
+    ModerationTarget:
+      type: string
+      enum: [POST, REPLY, PROFILE]
+
+    # --- Core objects ---
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId:
+          type: string
+          nullable: true
+        profileId:
+          type: string
+          nullable: true
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        state: { $ref: '#/components/schemas/ContentState' }
+
+    Reply:
+      type: object
+      properties:
+        id: { type: string }
+        postId: { type: string }
+        sessionId:
+          type: string
+          nullable: true
+        profileId:
+          type: string
+          nullable: true
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        state: { $ref: '#/components/schemas/ContentState' }
+
+    ModerationReport:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId:
+          type: string
+          nullable: true
+        targetType: { $ref: '#/components/schemas/ReportTarget' }
+        targetId: { type: string }
+        reason:
+          type: string
+          nullable: true
+        createdAt: { type: string, format: date-time }
+
+    ModerationAction:
+      type: object
+      properties:
+        id: { type: string }
+        actor: { type: string }
+        targetType: { $ref: '#/components/schemas/ModerationTarget' }
+        targetId:
+          type: string
+          nullable: true
+        profileId:
+          type: string
+          nullable: true
+        action: { $ref: '#/components/schemas/ModerationActionType' }
+        reason:
+          type: string
+          nullable: true
+        createdAt: { type: string, format: date-time }

@@ -68,7 +68,6 @@ export async function POST(
 ) {
   assertSameOrigin(req);
   const payload = await requireJson<any>(req);
-
   const { id: postId } = await ctx.params;
 
   const parent = await prisma.post.findUnique({
@@ -109,8 +108,7 @@ export async function POST(
   }
 
   await ensureSessionProfile(sid);
-
-  const profileId = await getCurrentProfileId(); // string | null
+  const profileId = await getCurrentProfileId();
 
   const gate = await canCreateReply(sid, profileId ?? undefined, postId);
   if (!gate.ok)

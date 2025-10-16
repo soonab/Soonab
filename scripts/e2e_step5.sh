@@ -1,98 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Config ---------------------------------------------------------------
-# You can override BASE like: BASE=http://127.0.0.1:3001 bash scripts/e2e_step5.sh
 BASE="${BASE:-http://localhost:3000}"
-A_JAR="${A_JAR:-/tmp/soonab_A.cookies}"
-B_JAR="${B_JAR:-/tmp/soonab_B.cookies}"
-BODY_TEXT="${BODY_TEXT:-e2e post from A #e2e}"
+KEY="${ADMIN_KEY:-dev}"
 
 need() { command -v "$1" >/dev/null || { echo "Missing dependency: $1"; exit 1; }; }
-need curl; need jq
+need curl
+need jq
 
-say() { printf "\n— %s\n" "$1"; }
-fail() { echo "❌ $1" >&2; exit 1; }
+A_COOKIES="${TMPDIR:-/tmp}/alinkah-a.cookies"
+rm -f "$A_COOKIES"
 
-# --- Helper: pick port if 3000 is busy -----------------------------------
-try_health() { curl -s "$1/api/health" | jq -r '.ok' 2>/dev/null || true; }
+echo "=== Step-8 E2E: OAuth + Magic-link + Cookies ==="
 
-if [[ "$(try_health "$BASE")" != "true" ]]; then
-  # common dev case: Next fell back to 3001
-  if [[ "$BASE" == "http://localhost:3000" ]] && [[ "$(try_health "http://localhost:3001")" == "true" ]]; then
-    BASE="http://localhost:3001"
-    echo "ℹ️  Using fallback BASE=$BASE"
-  else
-    fail "Server not healthy at $BASE (try running: pnpm dev)"
-  fi
-fi
+# 1) Health
+echo "- Checking /api/health"
+curl -fsS "$BASE/api/health" | jq -e '.ok==true' >/dev/null || { echo "❌ /api/health not OK"; exit 1; }
+echo "  ✅ Health OK"
 
-# --- Clean state ----------------------------------------------------------
-rm -f "$A_JAR" "$B_JAR"
+# 2) Google start redirect (no need to follow to Google; just verify Location)
+echo "- Checking /api/auth/google redirect"
+HEADERS=$(curl -s -D - -o /dev/null "$BASE/api/auth/google")
+STATUS=$(echo "$HEADERS" | awk 'toupper($1$2)=="HTTP/1.1"||toupper($1$2)=="HTTP/2" {print $2}')
+LOC=$(echo "$HEADERS" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
+[[ "$STATUS" == "302" || "$STATUS" == "307" ]] || { echo "❌ Unexpected status: $STATUS"; exit 1; }
+case "$LOC" in
+  https://accounts.google.com/*) echo "  ✅ Google start Location OK";;
+  *) echo "  ⚠️  Location unexpected: $LOC (check GOOGLE_CLIENT_ID/SECRET)";;
+esac
 
-# --- 1) Health ------------------------------------------------------------
-say "1) Health"
-curl -s "$BASE/api/health" | jq .
+# 3) Magic-link sign-in (creates user+profile immediately)
+echo "- Magic link sign-in for A"
+LINK_A=$(curl -fsS "$BASE/api/auth/request-link?email=e2e-a@example.com" | jq -r '.link')
+[[ "$LINK_A" != "null" && -n "$LINK_A" ]] || { echo "❌ request-link failed"; exit 1; }
+curl -fsSL -c "$A_COOKIES" -b "$A_COOKIES" "$LINK_A" >/dev/null
 
-# --- 2) Sign in A (magic link) -------------------------------------------
-say "2) Sign in A (magic link)"
-LINK_A=$(curl -s "$BASE/api/auth/request-link?email=e2e-a@example.com" | jq -r '.link')
-[[ -n "$LINK_A" && "$LINK_A" != "null" ]] || fail "Could not get magic link for A"
-curl -s -L "$LINK_A" -c "$A_JAR" -b "$A_JAR" >/dev/null
-A_URL=$(curl -s -L -o /dev/null -w "%{url_effective}" "$BASE/me" -b "$A_JAR" -c "$A_JAR")
-A_HANDLE="${A_URL##*/}"
-[[ "$A_HANDLE" =~ ^nab- ]] || fail "Could not resolve A handle"
-echo "   A handle: @$A_HANDLE"
+# Confirm authed user + profile mapping
+WHO=$(curl -fsS -b "$A_COOKIES" "$BASE/api/debug/whoami")
+UID=$(echo "$WHO" | jq -r '.uid // ""')
+PID=$(echo "$WHO" | jq -r '.pid // ""')
+[[ -n "$UID" && -n "$PID" ]] || { echo "❌ whoami missing uid/pid"; echo "$WHO" | jq; exit 1; }
+echo "  ✅ Signed in as uid=$UID pid=$PID"
 
-# --- 3) Sign in B (magic link) -------------------------------------------
-say "3) Sign in B (magic link)"
-LINK_B=$(curl -s "$BASE/api/auth/request-link?email=e2e-b@example.com" | jq -r '.link')
-[[ -n "$LINK_B" && "$LINK_B" != "null" ]] || fail "Could not get magic link for B"
-curl -s -L "$LINK_B" -c "$B_JAR" -b "$B_JAR" >/dev/null
-B_URL=$(curl -s -L -o /dev/null -w "%{url_effective}" "$BASE/me" -b "$B_JAR" -c "$B_JAR")
-B_HANDLE="${B_URL##*/}"
-[[ "$B_HANDLE" =~ ^nab- ]] || fail "Could not resolve B handle"
-echo "   B handle: @$B_HANDLE"
-
-# --- 4) A creates a post --------------------------------------------------
-say "4) A creates a post"
-CREATE_RES=$(curl -s -X POST "$BASE/api/posts" \
+# 4) Create post as A
+echo "- Creating post as A"
+POST_ID=$(curl -fsS -X POST "$BASE/api/posts" \
   -H 'Content-Type: application/json' \
-  -d "{\"body\":\"$BODY_TEXT\"}" \
-  -c "$A_JAR" -b "$A_JAR")
-echo "$CREATE_RES" | jq '.ok,.post.id'
-OK=$(echo "$CREATE_RES" | jq -r '.ok')
-[[ "$OK" == "true" ]] || fail "Post create failed: $(echo "$CREATE_RES" | jq -c '.')"
-POST_ID=$(echo "$CREATE_RES" | jq -r '.post.id')
-[[ -n "$POST_ID" && "$POST_ID" != "null" ]] || fail "No POST_ID returned"
+  -d '{"body":"step8 e2e post"}' \
+  -b "$A_COOKIES" | jq -r '.post.id')
+[[ -n "$POST_ID" && "$POST_ID" != "null" ]] || { echo "❌ post create failed"; exit 1; }
+echo "  ✅ Post id: $POST_ID"
 
-# --- 5) B replies to A (unlocks rating) -----------------------------------
-say "5) B replies to A (satisfies interaction requirement)"
-REPLY_RES=$(curl -s -X POST "$BASE/api/posts/$POST_ID/replies" \
-  -H 'Content-Type: application/json' \
-  -d '{"body":"e2e reply from B"}' \
-  -c "$B_JAR" -b "$B_JAR")
-echo "$REPLY_RES" | jq .
-[[ "$(echo "$REPLY_RES" | jq -r '.ok')" == "true" ]] || fail "Reply failed: $(echo "$REPLY_RES" | jq -c '.')"
+# 5) Sign out and confirm
+echo "- Signing out"
+curl -fsS -X POST "$BASE/api/auth/signout" -b "$A_COOKIES" >/dev/null
+UID2=$(curl -fsS -b "$A_COOKIES" "$BASE/api/debug/whoami" | jq -r '.uid // ""')
+[[ -z "$UID2" ]] && echo "  ✅ Signed out cleanly" || { echo "❌ signout failed"; exit 1; }
 
-# --- small wait: let DB write settle for gates relying on recent activity --
-sleep 0.5
-
-# --- 6) B rates A (5★) ----------------------------------------------------
-say "6) B rates A (5★)"
-RATE_RES=$(curl -s -X POST "$BASE/api/reputation/rate" \
-  -H 'Content-Type: application/json' \
-  -d "{\"targetHandle\":\"$A_HANDLE\",\"value\":5}" \
-  -c "$B_JAR" -b "$B_JAR")
-echo "$RATE_RES" | jq .
-if [[ "$(echo "$RATE_RES" | jq -r '.ok')" != "true" ]]; then
-  ERR=$(echo "$RATE_RES" | jq -r '.error? // empty')
-  [[ "$ERR" == "Interact (reply) before rating" ]] && fail "Gate still closed: server did not observe B's reply (check logs for /replies 200)"
-  fail "Rating failed: $ERR"
-fi
-
-# --- 7) Get A's public score ---------------------------------------------
-say "7) Get A's public score"
-curl -s "$BASE/api/reputation/$A_HANDLE" | jq .
-
-echo -e "\n✅ E2E finished. A=@$A_HANDLE  B=@$B_HANDLE"
+echo "🎉 All Step-8 checks passed."

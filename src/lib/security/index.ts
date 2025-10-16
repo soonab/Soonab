@@ -1,11 +1,11 @@
-// src/lib/security.ts
+// src/lib/security/index.ts
 import type { NextRequest } from 'next/server';
 
 /** Enforce same-origin for state-changing requests. */
 export function assertSameOrigin(req: NextRequest): void {
   const origin = req.headers.get('origin');
   const host = req.headers.get('host');
-  if (!origin || !host) return; // Allow SSR/server-side calls without Origin
+  if (!origin || !host) return;
   try {
     const u = new URL(origin);
     if (u.host !== host) throw new Error('bad_origin');
@@ -23,7 +23,7 @@ export async function requireJson<T = unknown>(req: NextRequest): Promise<T> {
   return data as T;
 }
 
-/** Best-effort IP extraction. */
+/** Extract client IP (works behind proxies). */
 export function clientIp(req: NextRequest): string {
   const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   if (first) return first;
@@ -34,5 +34,5 @@ export function clientIp(req: NextRequest): string {
   return 'local';
 }
 
-/** Legacy re-export so old call sites keep working. */
-export { limitRequest } from './ratelimit';
+/** Re-export rate limiter so legacy imports keep working. */
+export { limitRequest } from '../ratelimit';

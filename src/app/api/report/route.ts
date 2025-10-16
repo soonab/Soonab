@@ -1,45 +1,46 @@
+// src/app/api/report/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { randomUUID } from 'crypto';
-import { ReportTarget } from '@prisma/client';
+import { assertSameOrigin, requireJson } from '@/lib/security';
+import { limitRequest } from '@/lib/ratelimit';
+
+const RL_REPORTS = Number(process.env.RL_REPORTS_PER_MIN || 10);
 
 export async function POST(req: NextRequest) {
-  let payload: any;
-  try { payload = await req.json(); }
-  catch { return NextResponse.json({ ok: false, error: 'Invalid JSON' }, { status: 400 }); }
+  assertSameOrigin(req);
+  const hit = limitRequest(req, 'report:create', RL_REPORTS, 60);
+  if (!hit.ok) return NextResponse.json({ ok: false, error: 'rate_limited' }, { status: 429 });
 
-  const targetType = (payload?.targetType ?? '').toString().toUpperCase();
-  const targetId = (payload?.targetId ?? '').toString();
-  const reason = (payload?.reason ?? '').toString().slice(0, 500) || null;
+  const payload = await requireJson<{ targetType: 'POST'|'REPLY'; targetId: string; reason?: string }>(req);
 
-  if (!['POST', 'REPLY'].includes(targetType) || !targetId) {
-    return NextResponse.json({ ok: false, error: 'targetType (POST|REPLY) and targetId are required' }, { status: 400 });
+  const targetType = String(payload?.targetType || '');
+  const targetId = String(payload?.targetId || '');
+  const reason = payload?.reason ? String(payload.reason) : null;
+
+  if (!['POST','REPLY'].includes(targetType) || !targetId) {
+    return NextResponse.json({ ok:false, error:'Bad request' }, { status:400 });
   }
 
-  if (targetType === 'POST') {
-    const ok = await prisma.post.findUnique({ where: { id: targetId }, select: { id: true } });
-    if (!ok) return NextResponse.json({ ok: false, error: 'Post not found' }, { status: 404 });
-  } else {
-    const ok = await prisma.reply.findUnique({ where: { id: targetId }, select: { id: true } });
-    if (!ok) return NextResponse.json({ ok: false, error: 'Reply not found' }, { status: 404 });
+  const jar = await cookies();
+  let sid = jar.get('sid')?.value as string | undefined;
+  let setCookie = false;
+  if (!sid) { sid = randomUUID(); setCookie = true; }
+
+  await prisma.moderationReport.create({
+    data: { sessionId: sid, targetType: targetType as 'POST'|'REPLY', targetId, reason },
+  });
+
+  const res = NextResponse.json({ ok:true });
+  if (setCookie) {
+    res.cookies.set('sid', sid, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 365,
+    });
   }
-
-  const jar = cookies();
-  let sid = jar.get('sid')?.value;
-  if (!sid) sid = randomUUID();
-
-  const created = await prisma.moderationReport.create({
-    data: { sessionId: sid, targetType: targetType as ReportTarget, targetId, reason },
-  });
-
-  const res = NextResponse.json({ ok: true, report: { id: created.id } });
-  res.cookies.set('sid', sid, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 365,
-  });
   return res;
 }

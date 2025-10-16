@@ -59,7 +59,7 @@ export async function canCreatePost(
 
 /**
  * Reply quota gate.
- * Signature matches route import: canCreateReply(sid, profileId?, postId?)
+ * Signature matches older call sites: canCreateReply(sid, profileId?, postId?)
  */
 export async function canCreateReply(
   sessionId: string,
@@ -80,7 +80,7 @@ export async function canCreateReply(
   return { ok: true as const, quota: q };
 }
 
-// Also export the new name so direct imports work cleanly
+// New name so modern call sites can import it directly
 export async function canReply(
   sessionId: string,
   profileId?: string | null,

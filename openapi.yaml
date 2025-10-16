@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: Soonab API
+  title: Alinkah API
   version: 1.0.0
   description: >
-    Chronological, no-ranking social MVP. Public endpoints for reading/creating
-    posts and replies, reporting content; key-gated admin moderation actions.
+    Chronological, no-ranking social MVP for Alinkah. Public endpoints for posts, replies, reporting;
+    key-gated admin moderation actions. Step-9 adds cursor pagination for posts and replies.
 
 servers:
   - url: http://localhost:3000
@@ -20,28 +20,43 @@ tags:
   - name: Replies
   - name: Reports
   - name: Admin
+  - name: Auth
+  - name: Ops
 
 paths:
+  /api/health:
+    get:
+      tags: [Ops]
+      summary: Service health
+      responses:
+        '200': { description: OK }
+        '503': { description: DB unreachable }
+
+  /api/csp-report:
+    post:
+      tags: [Ops]
+      summary: CSP violation report (report-only)
+      responses:
+        '200': { description: OK }
+
   /api/posts:
     get:
       tags: [Posts]
-      summary: Get recent public posts (chronological)
+      summary: List PUBLIC posts (paginated, newest-first)
       parameters:
         - in: query
           name: limit
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string, nullable: true, description: Base64URL cursor from previous page }
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  posts:
-                    type: array
-                    items: { $ref: '#/components/schemas/Post' }
+                $ref: '#/components/schemas/PaginatedPostsResponse'
     post:
       tags: [Posts]
       summary: Create a post
@@ -50,37 +65,40 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [body]
-              properties:
-                body:
-                  type: string
-                  maxLength: 500
-                visibility:
-                  $ref: '#/components/schemas/Visibility'
+              $ref: '#/components/schemas/CreatePostRequest'
       responses:
         '200':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  post: { $ref: '#/components/schemas/Post' }
-                  hashtags:
-                    type: array
-                    items: { type: string }
-                  quota:
-                    nullable: true
-                    oneOf:
-                      - type: integer
-                      - type: 'null'
+                $ref: '#/components/schemas/CreatePostResponse'
         '400': { description: Bad request }
         '403': { description: Forbidden (moderation penalty) }
         '429': { description: Rate or quota limit }
 
   /api/posts/{id}/replies:
+    get:
+      tags: [Replies]
+      summary: List replies for a post (paginated, ascending)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: cursor
+          schema: { type: string, nullable: true, description: Base64URL cursor from previous page }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRepliesResponse'
     post:
       tags: [Replies]
       summary: Create a reply (PUBLIC only for now)
@@ -94,27 +112,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [body]
-              properties:
-                body:
-                  type: string
-                  maxLength: 500
+              $ref: '#/components/schemas/CreateReplyRequest'
       responses:
         '200':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  reply: { $ref: '#/components/schemas/Reply' }
-                  quota:
-                    nullable: true
-                    oneOf:
-                      - type: integer
-                      - type: 'null'
+                $ref: '#/components/schemas/CreateReplyResponse'
         '400': { description: Bad request }
         '403': { description: Forbidden (moderation penalty) }
         '404': { description: Parent post not found }
@@ -129,12 +134,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [targetType, targetId]
-              properties:
-                targetType: { $ref: '#/components/schemas/ReportTarget' }
-                targetId: { type: string }
-                reason: { type: string }
+              $ref: '#/components/schemas/CreateReportRequest'
       responses:
         '200': { description: Accepted }
         '400': { description: Bad request }
@@ -153,23 +153,36 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                action:
-                  $ref: '#/components/schemas/ModerationActionType'
-                targetType:
-                  $ref: '#/components/schemas/ModerationTarget'
-                targetId:
-                  type: string
-                  nullable: true
-                profileHandle:
-                  type: string
-                reason:
-                  type: string
+              $ref: '#/components/schemas/AdminModerationActionRequest'
       responses:
         '200': { description: OK }
         '400': { description: Bad request }
         '403': { description: Forbidden (missing/invalid admin key) }
+
+  /api/auth/google:
+    get:
+      tags: [Auth]
+      summary: Begin Google OAuth (PKCE)
+      parameters:
+        - in: query
+          name: redirect
+          schema: { type: string, description: "path-only redirect (same-origin)" }
+      responses:
+        '302': { description: Redirect to Google }
+
+  /api/auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth callback (code exchange)
+      responses:
+        '302': { description: Redirect to app }
+
+  /api/auth/signout:
+    post:
+      tags: [Auth]
+      summary: Sign out current user (clear auth cookie)
+      responses:
+        '200': { description: OK }
 
 components:
   schemas:
@@ -257,3 +270,81 @@ components:
           type: string
           nullable: true
         createdAt: { type: string, format: date-time }
+
+    # --- Requests & Responses ---
+    CreatePostRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 500
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+
+    CreatePostResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        post: { $ref: '#/components/schemas/Post' }
+        hashtags:
+          type: array
+          items: { type: string }
+        quota:
+          nullable: true
+          oneOf:
+            - type: integer
+            - type: 'null'
+
+    CreateReplyRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 500
+
+    CreateReplyResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        reply: { $ref: '#/components/schemas/Reply' }
+        quota:
+          nullable: true
+          oneOf:
+            - type: integer
+            - type: 'null'
+
+    CreateReportRequest:
+      type: object
+      required: [targetType, targetId]
+      properties:
+        targetType: { $ref: '#/components/schemas/ReportTarget' }
+        targetId: { type: string }
+        reason: { type: string }
+
+    PaginatedPostsResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Post' }
+        posts:
+          description: Back-compat: same as items (deprecated)
+          type: array
+          items: { $ref: '#/components/schemas/Post' }
+        nextCursor:
+          type: string
+          nullable: true
+
+    PaginatedRepliesResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Reply' }
+        nextCursor:
+          type: string
+          nullable: true

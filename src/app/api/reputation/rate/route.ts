@@ -5,26 +5,28 @@ import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/db';
 import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
-import { recomputeScore } from '@/lib/reputation';
-import { recomputeScoreForProfile } from '@/lib/reputation';
+import { recomputeScore, recomputeScoreForProfile } from '@/lib/reputation';
+import { assertSameOrigin, requireJson } from '@/lib/security';
 
 const REQUIRE_INTERACTION_DAYS = Number(process.env.REP_REQUIRE_INTERACTION_DAYS ?? 7);
 
 function daysAgo(d: number) {
-  return new Date(Date.now() - d * 86400000);
+  return new Date(Date.now() - d * 86_400_000);
 }
 
 export async function POST(req: NextRequest) {
-  // --- Identify rater (session + profile) ---
+  // ---- Security posture ----
+  assertSameOrigin(req); // block cross-origin browser posts
+  const body = await requireJson<{ targetHandle: string; value: number }>(req); // 415/400 correctly
+
+  // ---- Identify rater (session + profile) ----
   const jar = await cookies();
   let sid = jar.get('sid')?.value;
   let setSid = false;
   if (!sid) { sid = randomUUID(); setSid = true; }
-  const pid = await getCurrentProfileId(); // may be null
+  const pid = await getCurrentProfileId(); // may be null (signed-out)
 
-  // --- Parse body ---
-  let body: any;
-  try { body = await req.json(); } catch { body = {}; }
+  // ---- Parse & validate payload ----
   const targetHandle = String(body?.targetHandle || '').trim().toLowerCase();
   const val = Number(body?.value);
 
@@ -35,9 +37,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // --- Resolve target by handle (Profile preferred, Session fallback) ---
-  const targetProfile = await prisma.profile.findUnique({ where: { handle: targetHandle } });
-  const targetSession = await prisma.sessionProfile.findFirst({ where: { handle: targetHandle } });
+  // ---- Resolve target by handle (Profile preferred, Session fallback) ----
+  const [targetProfile, targetSession] = await Promise.all([
+    prisma.profile.findUnique({ where: { handle: targetHandle } }),
+    prisma.sessionProfile.findFirst({ where: { handle: targetHandle } }),
+  ]);
 
   if (!targetProfile && !targetSession) {
     return NextResponse.json({ ok: false, error: 'Target not found' }, { status: 404 });
@@ -46,16 +50,16 @@ export async function POST(req: NextRequest) {
   const targetProfileId = targetProfile?.id ?? null;
   const targetSessionId = targetSession?.sessionId ?? null;
 
-  // --- No self-rating ---
+  // ---- No self-rating (handle both identity types) ----
   if ((pid && targetProfileId && pid === targetProfileId) ||
       (sid && targetSessionId && sid === targetSessionId)) {
     return NextResponse.json({ ok: false, error: 'You cannot rate yourself' }, { status: 400 });
   }
 
-  // --- Ensure rater has a SessionProfile (legacy path) ---
+  // ---- Ensure rater has a SessionProfile (legacy continuity) ----
   await ensureSessionProfile(sid);
 
-  // --- Interaction required? Check replies across both identities ---
+  // ---- Interaction gate (optional; enforce replies within N days) ----
   if (REQUIRE_INTERACTION_DAYS > 0) {
     const since = daysAgo(REQUIRE_INTERACTION_DAYS);
     const orClauses: any[] = [];
@@ -73,7 +77,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // --- Upsert rating row (merge by whichever unique exists) ---
+  // ---- Upsert rating row (preserve whichever identifiers we have) ----
   const existing = await prisma.reputationRating.findFirst({
     where: {
       OR: [
@@ -89,7 +93,7 @@ export async function POST(req: NextRequest) {
       where: { id: existing.id },
       data: {
         value: val,
-        // Fill in whichever identifiers we now have (so a single row holds both)
+        // Merge: attach any now-known identifiers to unify legacy/new identities
         raterProfileId: pid ?? existing.raterProfileId,
         targetProfileId: targetProfileId ?? existing.targetProfileId,
         raterSessionId: sid ?? existing.raterSessionId,
@@ -108,19 +112,24 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // --- Recompute target score (session-based if possible, else profile-based) ---
+  // ---- Recompute target score (session-based preferred; else profile-based) ----
   let score = null;
   if (targetSessionId) {
     score = await recomputeScore(targetSessionId);
-    // Best-effort: link the score row to profileId if we have it
+    // Best-effort: link score row to profileId if we have it
     if (targetProfileId && score && !score.profileId) {
-      try { await prisma.reputationScore.update({ where: { sessionId: targetSessionId }, data: { profileId: targetProfileId } }); } catch {}
+      try {
+        await prisma.reputationScore.update({
+          where: { sessionId: targetSessionId },
+          data: { profileId: targetProfileId },
+        });
+      } catch {/* ignore constraint races */}
     }
   } else if (targetProfileId) {
     score = await recomputeScoreForProfile(targetProfileId);
   }
 
-  // --- Response & cookie ---
+  // ---- Response & cookie ----
   const res = NextResponse.json({ ok: true, ratingId: rating.id, score });
   if (setSid) {
     res.cookies.set('sid', sid, {

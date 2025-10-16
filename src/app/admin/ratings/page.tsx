@@ -1,3 +1,4 @@
+// src/app/admin/ratings/page.tsx
 import { prisma } from '@/lib/db';
 
 export default async function RatingsAdminPage({
@@ -33,8 +34,9 @@ export default async function RatingsAdminPage({
           {ratings.map((r) => (
             <li key={`${r.targetSessionId}:${r.raterSessionId}`}>
               <code>{new Date(r.updatedAt).toISOString()}</code> — rater{' '}
-              <code>{r.raterSessionId.slice(-4)}</code> → target{' '}
-              <code>{r.targetSessionId.slice(-4)}</code> : <strong>{r.value}★</strong>
+              <code>{(r.raterSessionId ?? '').slice(-4) || 'anon'}</code> → target{' '}
+              <code>{(r.targetSessionId ?? '').slice(-4) || 'post'}</code> :{' '}
+              <strong>{r.value}★</strong>
             </li>
           ))}
         </ul>
@@ -46,8 +48,8 @@ export default async function RatingsAdminPage({
           {flags.map((f) => (
             <li key={f.id}>
               <code>{new Date(f.createdAt).toISOString()}</code> — target{' '}
-              <code>{f.targetSessionId.slice(-4)}</code> : {f.reason} (count {f.count}){' '}
-              {f.resolved ? '✅' : '⚠️'}
+              <code>{(f.targetSessionId ?? '').slice(-4) || 'post'}</code> :{' '}
+              {f.reason} (count {f.count}) {f.resolved ? '✅' : '⚠️'}
             </li>
           ))}
         </ul>

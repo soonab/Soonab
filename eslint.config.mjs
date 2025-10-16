@@ -1,19 +1,21 @@
 // eslint.config.mjs
+// Flat-config setup for Next.js + TypeScript + ESLint 9
+
+// If local `pnpm lint` throws a rushstack patch error, uncomment:
+// import '@rushstack/eslint-patch/modern-module-resolution';
+
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import next from 'eslint-config-next';
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
-  // Ignore generated / vendor output
-  { ignores: ['node_modules/**', '.next/**'] },
+  { ignores: ['node_modules/**', '.next/**', 'dist/**'] },
 
-  // Base JS + TypeScript + Next rules
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
-  next,
+  ...next,
 
-  // Project-wide TypeScript settings
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
@@ -23,11 +25,13 @@ export default [
       },
     },
     rules: {
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
     },
   },
 
-  // 👇 Only relax "any" in server API routes so production builds don’t fail
   {
     files: ['src/app/api/**/*.{ts,tsx}'],
     rules: {

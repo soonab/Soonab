@@ -1,12 +1,16 @@
 // src/lib/moderation.ts
-import { prisma } from '@/lib/db'
+import { prisma } from '@/lib/db';
 
 export async function hasActivePostingPenalty(profileId?: string | null) {
-  if (!profileId) return false // allow legacy anonymous for now
-  const now = new Date()
+  if (!profileId) return false; // allow legacy anonymous posts
+  const now = new Date();
   const active = await prisma.profilePenalty.findFirst({
-    where: { profileId, resolvedAt: null, OR: [{ until: null }, { until: { gt: now } }] },
+    where: {
+      profileId,
+      resolvedAt: null,
+      OR: [{ until: null }, { until: { gt: now } }],
+    },
     select: { id: true },
-  })
-  return !!active
+  });
+  return !!active;
 }

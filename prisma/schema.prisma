@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,52 +7,40 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * Users & Profiles (Step-5)
- */
+/// *
+///  * Users & Profiles (Step-5)
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  createdAt DateTime  @default(now())
+  id        String       @id @default(cuid())
+  email     String       @unique
+  createdAt DateTime     @default(now())
+  accounts  Account[]
+  logins    LoginEvent[]
   profiles  Profile[]
 }
 
 model Profile {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  handle      String   @unique
-  displayName String?
-  bio         String?  @db.Text
-  isDeleted   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-
-  posts   Post[]
-  replies Reply[]
-
-  // Ratings (profile-based)
-  targetProfileRatings ReputationRating[] @relation("TargetProfileRatings")
+  id                   String             @id @default(cuid())
+  userId               String
+  handle               String             @unique
+  displayName          String?
+  bio                  String?
+  isDeleted            Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  followingConnections Follow[]           @relation("follows_follower")
+  followerConnections  Follow[]           @relation("follows_following")
+  posts                Post[]
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  penalties            ProfilePenalty[]
+  replies              Reply[]
   raterProfileRatings  ReputationRating[] @relation("RaterProfileRatings")
-
-  // Cached score (profile-based; optional)
-  score ReputationScore?
-
-  // --- Step-6: audience edges (back-relations) ---
-  // Following: I (follower) -> they (following)
-  followingConnections Follow[] @relation("follows_follower")
-  followerConnections  Follow[] @relation("follows_following")
-
-  // Trust: I (truster/author) -> they (trustee/viewer)
-  trustGiven    Trust[] @relation("trusts_truster")
-  trustReceived Trust[] @relation("trusts_trustee")
-
-  // --- Step-7: penalties (back-relation) ---
-  penalties ProfilePenalty[]
+  targetProfileRatings ReputationRating[] @relation("TargetProfileRatings")
+  score                ReputationScore?
+  trustReceived        Trust[]            @relation("trusts_trustee")
+  trustGiven           Trust[]            @relation("trusts_truster")
 }
 
-/**
- * Magic link tokens
- */
+/// *
+///  * Magic link tokens
 model MagicLinkToken {
   id        String    @id @default(cuid())
   email     String
@@ -66,83 +52,47 @@ model MagicLinkToken {
   @@index([email, expiresAt])
 }
 
-/**
- * Setup marker
- */
+/// *
+///  * Setup marker
 model SetupCheck {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 }
 
-/**
- * Visibility & Content State
- */
-enum Visibility {
-  PUBLIC
-  FOLLOWERS
-  TRUSTED
-}
-
-enum ContentState {
-  ACTIVE
-  HIDDEN
-  REMOVED
-}
-
-/**
- * Posts & Replies
- */
+/// *
+///  * Posts & Replies
 model Post {
-  id String @id @default(cuid())
-
-  // Legacy anonymous identity (pre-accounts)
-  sessionId String?
-
-  // New ownership (Step-5)
-  profileId String?
-  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
-
-  body       String     @db.Text
-  createdAt  DateTime   @default(now())
-  visibility Visibility @default(PUBLIC)
-
-  // Step-7: moderation content state
-  state ContentState @default(ACTIVE)
-
-  replies Reply[]
+  id         String       @id @default(cuid())
+  sessionId  String?
+  body       String
+  createdAt  DateTime     @default(now())
+  visibility Visibility   @default(PUBLIC)
+  profileId  String?
+  state      ContentState @default(ACTIVE)
+  profile    Profile?     @relation(fields: [profileId], references: [id])
+  replies    Reply[]
 
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_post_created_id_desc")
 }
 
 model Reply {
-  id     String @id @default(cuid())
-  postId String
-  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  id         String       @id @default(cuid())
+  postId     String
+  sessionId  String?
+  body       String
+  createdAt  DateTime     @default(now())
+  visibility Visibility   @default(PUBLIC)
+  profileId  String?
+  state      ContentState @default(ACTIVE)
+  post       Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  profile    Profile?     @relation(fields: [profileId], references: [id])
 
-  sessionId String?
-  profileId String?
-  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
-
-  body       String     @db.Text
-  createdAt  DateTime   @default(now())
-  visibility Visibility @default(PUBLIC)
-
-  // Step-7: moderation content state
-  state ContentState @default(ACTIVE)
-
-  @@index([postId, createdAt(sort: Asc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
-}
-
-/**
- * Moderation — reports, actions, penalties
- */
-enum ReportTarget {
-  POST
-  REPLY
+  @@index([postId, createdAt, id], map: "idx_reply_post_created_id_asc")
 }
 
 model ModerationReport {
@@ -150,34 +100,18 @@ model ModerationReport {
   sessionId  String?
   targetType ReportTarget
   targetId   String
-  reason     String?      @db.Text
+  reason     String?
   createdAt  DateTime     @default(now())
 
   @@index([createdAt(sort: Desc)])
 }
 
-// Action types (audit log)
-enum ModerationActionType {
-  HIDE
-  UNHIDE
-  REMOVE
-  BLOCK_PROFILE
-  UNBLOCK_PROFILE
-}
-
-// Targets for actions (includes PROFILE for clarity)
-enum ModerationTarget {
-  POST
-  REPLY
-  PROFILE
-}
-
 model ModerationAction {
   id         String               @id @default(cuid())
-  actor      String // e.g. 'admin:console' (do not store secrets)
+  actor      String
   targetType ModerationTarget
-  targetId   String? // null for PROFILE actions if using profileId
-  profileId  String? // set when acting on a profile
+  targetId   String?
+  profileId  String?
   action     ModerationActionType
   reason     String?
   createdAt  DateTime             @default(now())
@@ -186,94 +120,70 @@ model ModerationAction {
   @@index([targetType, targetId, createdAt(sort: Desc)])
 }
 
-// Posting penalties
-enum PenaltyKind {
-  TEMP_POST_BAN
-  PERMA_BAN
-}
-
 model ProfilePenalty {
   id         String      @id @default(cuid())
   profileId  String
-  profile    Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
   kind       PenaltyKind
-  until      DateTime? // null for permanent
+  until      DateTime?
   reason     String?
   createdAt  DateTime    @default(now())
   resolvedAt DateTime?
+  profile    Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, createdAt(sort: Desc)])
   @@index([until])
 }
 
-/**
- * Pseudonymous session profile (pre-accounts)
- */
+/// *
+///  * Pseudonymous session profile (pre-accounts)
 model SessionProfile {
-  id        String   @id @default(cuid())
-  sessionId String   @unique
-  handle    String   @unique
-  createdAt DateTime @default(now())
-
-  // Back-relations for session-based ratings
-  targetRatings ReputationRating[] @relation("TargetRatings")
+  id            String             @id @default(cuid())
+  sessionId     String             @unique
+  handle        String             @unique
+  createdAt     DateTime           @default(now())
   raterRatings  ReputationRating[] @relation("RaterRatings")
+  targetRatings ReputationRating[] @relation("TargetRatings")
 }
 
-/**
- * Ratings (support session- and profile-based IDs)
- */
+/// *
+///  * Ratings (support session- and profile-based IDs)
 model ReputationRating {
-  id String @id @default(cuid())
-
-  // Session-based (legacy)
+  id              String          @id @default(cuid())
   targetSessionId String?
-  targetSession   SessionProfile? @relation("TargetRatings", fields: [targetSessionId], references: [sessionId], onDelete: SetNull)
-
-  raterSessionId String?
-  raterSession   SessionProfile? @relation("RaterRatings", fields: [raterSessionId], references: [sessionId], onDelete: SetNull)
-
-  // Profile-based (Step-5)
+  raterSessionId  String?
+  value           Int
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  raterProfileId  String?
   targetProfileId String?
-  targetProfile   Profile? @relation("TargetProfileRatings", fields: [targetProfileId], references: [id], onDelete: SetNull)
+  raterProfile    Profile?        @relation("RaterProfileRatings", fields: [raterProfileId], references: [id])
+  raterSession    SessionProfile? @relation("RaterRatings", fields: [raterSessionId], references: [sessionId])
+  targetProfile   Profile?        @relation("TargetProfileRatings", fields: [targetProfileId], references: [id])
+  targetSession   SessionProfile? @relation("TargetRatings", fields: [targetSessionId], references: [sessionId])
 
-  raterProfileId String?
-  raterProfile   Profile? @relation("RaterProfileRatings", fields: [raterProfileId], references: [id], onDelete: SetNull)
-
-  value     Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Uniques
   @@unique([targetSessionId, raterSessionId], name: "one_rater_per_target_session")
   @@unique([targetProfileId, raterProfileId], name: "one_rater_per_target_profile")
-  // Indices used by Step-4 cooldown/flags
   @@index([raterSessionId, updatedAt], map: "idx_reputation_rater_updated")
   @@index([targetSessionId, updatedAt], map: "idx_reputation_target_updated")
   @@index([raterProfileId, updatedAt], map: "idx_reputation_rater_profile_updated")
   @@index([targetProfileId, updatedAt], map: "idx_reputation_target_profile_updated")
 }
 
-/**
- * Cached aggregates
- */
+/// *
+///  * Cached aggregates
 model ReputationScore {
-  // Keep session-based id for backward compatibility
-  sessionId String   @id
-  // Step-5: optionally also key by profile
-  profileId String?  @unique
-  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
-
+  sessionId    String   @id
   count        Int      @default(0)
   sum          Int      @default(0)
   mean         Float    @default(0)
   bayesianMean Float    @default(0)
   updatedAt    DateTime @updatedAt
+  profileId    String?  @unique
+  profile      Profile? @relation(fields: [profileId], references: [id])
 }
 
-/**
- * Step-4 suspicion flags
- */
+/// *
+///  * Step-4 suspicion flags
 model ReputationFlag {
   id              String   @id @default(cuid())
   targetSessionId String
@@ -288,18 +198,14 @@ model ReputationFlag {
   @@index([targetSessionId, createdAt(sort: Desc)])
 }
 
-/**
- * --- Step-6: audience edges ---
- * Follow: follower -> following
- * Trust:  truster(author) -> trustee(viewer)
- */
+/// *
+///  * Step-6 audience edges
 model Follow {
   followerProfileId  String
   followingProfileId String
   createdAt          DateTime @default(now())
-
-  follower  Profile @relation("follows_follower", fields: [followerProfileId], references: [id], onDelete: Cascade)
-  following Profile @relation("follows_following", fields: [followingProfileId], references: [id], onDelete: Cascade)
+  follower           Profile  @relation("follows_follower", fields: [followerProfileId], references: [id], onDelete: Cascade)
+  following          Profile  @relation("follows_following", fields: [followingProfileId], references: [id], onDelete: Cascade)
 
   @@id([followerProfileId, followingProfileId])
   @@index([followingProfileId, followerProfileId])
@@ -310,11 +216,101 @@ model Trust {
   trusterProfileId String
   trusteeProfileId String
   createdAt        DateTime @default(now())
-
-  truster Profile @relation("trusts_truster", fields: [trusterProfileId], references: [id], onDelete: Cascade)
-  trustee Profile @relation("trusts_trustee", fields: [trusteeProfileId], references: [id], onDelete: Cascade)
+  trustee          Profile  @relation("trusts_trustee", fields: [trusteeProfileId], references: [id], onDelete: Cascade)
+  truster          Profile  @relation("trusts_truster", fields: [trusterProfileId], references: [id], onDelete: Cascade)
 
   @@id([trusterProfileId, trusteeProfileId])
   @@index([trusteeProfileId, trusterProfileId])
   @@index([createdAt(sort: Desc)])
+}
+
+model Account {
+  id         String       @id @default(cuid())
+  userId     String
+  provider   AuthProvider
+  providerId String
+  email      String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@index([userId])
+}
+
+model LoginEvent {
+  id        String      @id @default(cuid())
+  userId    String
+  method    LoginMethod
+  ip        String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model OAuthState {
+  id           String    @id @default(cuid())
+  state        String    @unique
+  codeVerifier String
+  nonce        String
+  sessionId    String?
+  redirectTo   String?
+  createdAt    DateTime  @default(now())
+  usedAt       DateTime?
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+}
+
+/// *
+///  * Visibility & Content State
+enum Visibility {
+  PUBLIC
+  FOLLOWERS
+  TRUSTED
+}
+
+enum ContentState {
+  ACTIVE
+  HIDDEN
+  REMOVED
+}
+
+/// *
+///  * Moderation — reports, actions, penalties
+enum ReportTarget {
+  POST
+  REPLY
+}
+
+enum ModerationActionType {
+  HIDE
+  UNHIDE
+  REMOVE
+  BLOCK_PROFILE
+  UNBLOCK_PROFILE
+}
+
+enum ModerationTarget {
+  POST
+  REPLY
+  PROFILE
+}
+
+enum PenaltyKind {
+  TEMP_POST_BAN
+  PERMA_BAN
+}
+
+/// *
+///  * Step-8 — Google OAuth v1
+enum AuthProvider {
+  GOOGLE
+}
+
+enum LoginMethod {
+  MAGIC_LINK
+  GOOGLE
 }

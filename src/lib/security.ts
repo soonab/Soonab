@@ -1,42 +1,48 @@
 // src/lib/security.ts
 import type { NextRequest } from 'next/server';
 
-export function siteOrigin(): string {
-  const base = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-  return new URL(base).origin;
-}
-
-export function assertSameOrigin(req: NextRequest) {
-  const allowed = siteOrigin();
+/**
+ * Assert same-origin requests for state-changing endpoints.
+ * Throws 'bad_origin' if Origin host !== Host header.
+ */
+export function assertSameOrigin(req: NextRequest): void {
   const origin = req.headers.get('origin');
-  if (origin && new URL(origin).origin !== allowed) {
-    // Block cross-origin browser posts (CSRF posture)
-    const err = new Error('bad_origin') as Error & { status?: number };
-    err.status = 403;
-    throw err;
-  }
-}
-
-export async function requireJson<T = any>(req: NextRequest): Promise<T> {
-  const ct = req.headers.get('content-type') || '';
-  if (!ct.toLowerCase().includes('application/json')) {
-    const err = new Error('bad_content_type') as Error & { status?: number };
-    err.status = 415;
-    throw err;
-  }
+  const host = req.headers.get('host');
+  if (!origin || !host) return; // SSR/fetches may omit Origin; allow
   try {
-    return (await req.json()) as T;
+    const u = new URL(origin);
+    if (u.host !== host) throw new Error('bad_origin');
   } catch {
-    const err = new Error('invalid_json') as Error & { status?: number };
-    err.status = 400;
-    throw err;
+    throw new Error('bad_origin');
   }
 }
 
+/**
+ * Require JSON content-type and parse body to T.
+ * Throws on wrong content-type or invalid JSON.
+ */
+export async function requireJson<T = unknown>(req: NextRequest): Promise<T> {
+  const ct = (req.headers.get('content-type') || '').toLowerCase();
+  if (!ct.includes('application/json')) throw new Error('bad_content_type');
+  const data = await req.json().catch(() => null);
+  if (data === null || data === undefined) throw new Error('invalid_json');
+  return data as T;
+}
+
+/** Best-effort client IP extraction (works on Vercel/Proxies). */
 export function clientIp(req: NextRequest): string {
   const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
-  const xr = req.headers.get('x-real-ip');
-  if (xr) return xr.trim();
+  const first = xf?.split(',')[0]?.trim();
+  if (first) return first;
+
+  const xr = req.headers.get('x-real-ip')?.trim();
+  if (xr) return xr;
+
+  const ra = req.headers.get('x-remote-addr')?.trim();
+  if (ra) return ra;
+
   return 'local';
 }
+
+/** Legacy re-export so old call sites keep working. */
+export { limitRequest } from './ratelimit';

@@ -46,7 +46,6 @@ export async function canCreatePost(
   sessionId: string,
   profileId?: string | null
 ) {
-  // getScore expects an identity object; allow nullable profileId
   const s = await getScore({ sessionId, profileId });
   const bayes = Number(s?.bayesianMean ?? 0);
   const q = quotasForScore(bayes);
@@ -80,11 +79,8 @@ export async function canCreateReply(
   }
   return { ok: true as const, quota: q };
 }
-// keep your existing canCreateReply(...) as-is above
 
-// Alias so both imports work:
-// - import { canCreateReply } from '@/lib/limits'
-// - import { canReply as canCreateReply } from '@/lib/limits'
+// Also export the new name so direct imports work cleanly
 export async function canReply(
   sessionId: string,
   profileId?: string | null,

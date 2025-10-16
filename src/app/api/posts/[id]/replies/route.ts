@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { randomUUID } from 'crypto';
 import { Visibility } from '@prisma/client';
-import { canReply as canCreateReply } from '@/lib/limits'; // ✅ fixed import
+import { canReply } from '@/lib/limits'; // 👈 direct import (no alias)
 import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
@@ -68,6 +68,7 @@ export async function POST(
 ) {
   assertSameOrigin(req);
   const payload = await requireJson<any>(req);
+
   const { id: postId } = await ctx.params;
 
   const parent = await prisma.post.findUnique({
@@ -108,9 +109,10 @@ export async function POST(
   }
 
   await ensureSessionProfile(sid);
-  const profileId = await getCurrentProfileId();
+  const profileId = await getCurrentProfileId(); // string | null
 
-  const gate = await canCreateReply(sid, profileId ?? undefined, postId);
+  // 👇 call canReply directly
+  const gate = await canReply(sid, profileId ?? undefined, postId);
   if (!gate.ok)
     return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
 

@@ -1,14 +1,11 @@
 // src/lib/security.ts
 import type { NextRequest } from 'next/server';
 
-/**
- * Assert same-origin requests for state-changing endpoints.
- * Throws 'bad_origin' if Origin host !== Host header.
- */
+/** Enforce same-origin for state-changing requests. */
 export function assertSameOrigin(req: NextRequest): void {
   const origin = req.headers.get('origin');
   const host = req.headers.get('host');
-  if (!origin || !host) return; // SSR/fetches may omit Origin; allow
+  if (!origin || !host) return; // Allow SSR/server-side calls without Origin
   try {
     const u = new URL(origin);
     if (u.host !== host) throw new Error('bad_origin');
@@ -17,10 +14,7 @@ export function assertSameOrigin(req: NextRequest): void {
   }
 }
 
-/**
- * Require JSON content-type and parse body to T.
- * Throws on wrong content-type or invalid JSON.
- */
+/** Require JSON content-type and parse body. */
 export async function requireJson<T = unknown>(req: NextRequest): Promise<T> {
   const ct = (req.headers.get('content-type') || '').toLowerCase();
   if (!ct.includes('application/json')) throw new Error('bad_content_type');
@@ -29,18 +23,14 @@ export async function requireJson<T = unknown>(req: NextRequest): Promise<T> {
   return data as T;
 }
 
-/** Best-effort client IP extraction (works on Vercel/Proxies). */
+/** Best-effort IP extraction. */
 export function clientIp(req: NextRequest): string {
-  const xf = req.headers.get('x-forwarded-for');
-  const first = xf?.split(',')[0]?.trim();
+  const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   if (first) return first;
-
   const xr = req.headers.get('x-real-ip')?.trim();
   if (xr) return xr;
-
   const ra = req.headers.get('x-remote-addr')?.trim();
   if (ra) return ra;
-
   return 'local';
 }
 

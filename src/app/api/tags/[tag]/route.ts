@@ -1,5 +1,6 @@
 // src/app/api/tags/[tag]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
@@ -11,6 +12,17 @@ const paramsSchema = z.object({
     .max(64)
     .regex(/^[a-zA-Z0-9_]+$/),
 });
+
+const postWithReplies = Prisma.validator<Prisma.PostDefaultArgs>()({
+  include: {
+    replies: {
+      where: { visibility: 'PUBLIC', state: 'ACTIVE' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    },
+  },
+});
+
+type PostWithReplies = Prisma.PostGetPayload<typeof postWithReplies>;
 
 export async function GET(
   req: NextRequest,
@@ -33,7 +45,7 @@ export async function GET(
     tags: { some: { tagId: tag.id } },
   };
 
-  const items = await prisma.post.findMany({
+  const items = (await prisma.post.findMany({
     where: cursor
       ? {
           ...baseWhere,
@@ -43,15 +55,10 @@ export async function GET(
           ],
         }
       : baseWhere,
-    include: {
-      replies: {
-        where: { visibility: 'PUBLIC', state: 'ACTIVE' },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      },
-    },
+    include: postWithReplies.include,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit,
-  });
+  })) as PostWithReplies[];
 
   const nextCursor =
     items.length === limit

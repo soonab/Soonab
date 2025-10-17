@@ -13,8 +13,8 @@ type ApiResponse = {
   reputationScores: ReputationInfo[];
 };
 
-function getOrigin(): string {
-  const hdrs = headers();
+async function getOrigin(): Promise<string> {
+  const hdrs = await headers();
   const host = hdrs.get('x-forwarded-host') ?? hdrs.get('host');
   const proto = hdrs.get('x-forwarded-proto') ?? 'http';
   if (host) return `${proto}://${host}`;
@@ -33,7 +33,7 @@ export default async function TagPage({
   }
   const normalized = decoded.toLowerCase();
 
-  const origin = getOrigin();
+  const origin = await getOrigin();
   const res = await fetch(`${origin}/api/tags/${encodeURIComponent(normalized)}`, {
     cache: 'no-store',
     headers: { Accept: 'application/json' },

@@ -1,5 +1,6 @@
 // src/app/api/search/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
@@ -13,6 +14,17 @@ const tagSchema = z
   .min(1)
   .max(64)
   .regex(/^[a-zA-Z0-9_]+$/);
+
+const postWithReplies = Prisma.validator<Prisma.PostDefaultArgs>()({
+  include: {
+    replies: {
+      where: { visibility: 'PUBLIC', state: 'ACTIVE' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    },
+  },
+});
+
+type PostWithReplies = Prisma.PostGetPayload<typeof postWithReplies>;
 
 export async function GET(req: NextRequest) {
   const parsed = querySchema.safeParse({ q: req.nextUrl.searchParams.get('q') ?? '' });
@@ -39,15 +51,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, items: [], nextCursor: null });
     }
 
-    const baseWhere = {
-      state: 'ACTIVE' as const,
-      visibility: 'PUBLIC' as const,
+    const baseWhere: Prisma.PostWhereInput = {
+      state: 'ACTIVE',
+      visibility: 'PUBLIC',
       tags: { some: { tagId: tag.id } },
     };
 
     const cursorDate = cursor ? new Date(cursor.createdAt) : null;
 
-    const items = await prisma.post.findMany({
+    const items = (await prisma.post.findMany({
       where: cursor
         ? {
             AND: [
@@ -61,15 +73,10 @@ export async function GET(req: NextRequest) {
             ],
           }
         : baseWhere,
-      include: {
-        replies: {
-          where: { visibility: 'PUBLIC', state: 'ACTIVE' },
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        },
-      },
+      include: postWithReplies.include,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
-    });
+    })) as PostWithReplies[];
 
     const nextCursor =
       items.length === limit
@@ -105,18 +112,31 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, items, nextCursor, sessionProfiles, reputationScores });
   }
 
-  const baseWhere = {
-    state: 'ACTIVE' as const,
-    visibility: 'PUBLIC' as const,
+  const baseWhere: Prisma.PostWhereInput = {
+    state: 'ACTIVE',
+    visibility: 'PUBLIC',
     OR: [
-      { body: { contains: q, mode: 'insensitive' as const } },
-      { tags: { some: { tag: { name: { contains: q.toLowerCase(), mode: 'insensitive' } } } } },
+      { body: { contains: q, mode: 'insensitive' as Prisma.QueryMode } },
+      {
+        tags: {
+          some: {
+            tag: {
+              is: {
+                name: {
+                  contains: q.toLowerCase(),
+                  mode: 'insensitive' as Prisma.QueryMode,
+                },
+              },
+            },
+          },
+        },
+      },
     ],
   };
 
   const cursorDate = cursor ? new Date(cursor.createdAt) : null;
 
-  const items = await prisma.post.findMany({
+  const items = (await prisma.post.findMany({
     where: cursor
       ? {
           AND: [
@@ -130,15 +150,10 @@ export async function GET(req: NextRequest) {
           ],
         }
       : baseWhere,
-    include: {
-      replies: {
-        where: { visibility: 'PUBLIC', state: 'ACTIVE' },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      },
-    },
+    include: postWithReplies.include,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit,
-  });
+  })) as PostWithReplies[];
 
   const nextCursor =
     items.length === limit

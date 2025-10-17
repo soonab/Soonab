@@ -20,7 +20,7 @@ function cspValue() {
   ].join('; ');
 }
 
-export function middleware(req: NextRequest) {
+export function middleware(_req: NextRequest) {
   const res = NextResponse.next();
 
   res.headers.set('X-Content-Type-Options', 'nosniff');

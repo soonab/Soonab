@@ -5,7 +5,7 @@ function mask(s: string) {
   return s.length <= 14 ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
 }
 
-export async function GET(req: Request) {
+export async function GET(_req: Request) {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   const redirectUri = process.env.OAUTH_REDIRECT_URL || '';
   return NextResponse.json({

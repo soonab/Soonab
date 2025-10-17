@@ -25,7 +25,9 @@ export async function POST(req: Request) {
   link.searchParams.set('redirect', redirect);
 
   // Replace this with your mailer
-  console.log('Magic link:', link.toString());
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('Magic link:', link.toString());
+  }
 
   return NextResponse.json({ ok: true });
 }

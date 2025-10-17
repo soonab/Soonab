@@ -1,0 +1,3 @@
+{
+  "buildCommand": "pnpm prisma migrate resolve --rolled-back 20251016120000_step11_tags || true && pnpm prisma migrate deploy && pnpm build"
+}

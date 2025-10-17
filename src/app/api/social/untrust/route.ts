@@ -2,10 +2,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentProfileId } from '@/lib/auth'
+import { assertSameOrigin, requireJson } from '@/lib/security'
 
 export async function POST(req: NextRequest) {
-  let payload: any
-  try { payload = await req.json() } catch { return NextResponse.json({ ok:false, error:'Invalid JSON' }, { status:400 }) }
+  assertSameOrigin(req)
+
+  const payload = await requireJson<{ handle: string }>(req)
   const handle = (payload?.handle ?? '').toString().trim().toLowerCase()
   if (!handle) return NextResponse.json({ ok:false, error:'handle required' }, { status:400 })
 
@@ -16,10 +18,11 @@ export async function POST(req: NextRequest) {
   if (!target) return NextResponse.json({ ok:false, error:'Profile not found' }, { status:404 })
   if (target.id === viewerPid) return NextResponse.json({ ok:false, error:'Cannot untrust yourself' }, { status:400 })
 
-  try {
-    await prisma.trust.delete({
-      where: { trusterProfileId_trusteeProfileId: { trusterProfileId: viewerPid, trusteeProfileId: target.id } },
-    })
-  } catch {}
+  await prisma.trust.deleteMany({
+    where: {
+      trusterProfileId: viewerPid,
+      trusteeProfileId: target.id,
+    },
+  })
   return NextResponse.json({ ok:true, trusted:false })
 }

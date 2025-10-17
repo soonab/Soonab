@@ -71,6 +71,7 @@ model Post {
   state      ContentState @default(ACTIVE)
   profile    Profile?     @relation(fields: [profileId], references: [id])
   replies    Reply[]
+  tags       PostTag[]
 
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
@@ -89,10 +90,39 @@ model Reply {
   state      ContentState @default(ACTIVE)
   post       Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
   profile    Profile?     @relation(fields: [profileId], references: [id])
+  tags       ReplyTag[]
 
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
   @@index([postId, createdAt, id], map: "idx_reply_post_created_id_asc")
+}
+
+model Tag {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  createdAt DateTime   @default(now())
+  posts     PostTag[]
+  replies   ReplyTag[]
+}
+
+model PostTag {
+  postId String
+  tagId  String
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId, postId])
+}
+
+model ReplyTag {
+  replyId String
+  tagId   String
+  reply   Reply @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([replyId, tagId])
+  @@index([tagId, replyId])
 }
 
 model ModerationReport {

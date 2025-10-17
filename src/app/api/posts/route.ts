@@ -10,17 +10,9 @@ import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
 import { assertSameOrigin, requireJson } from '@/lib/security';
+import { extractTags } from '@/lib/hashtags';
 
 const POST_MAX = 500;
-
-/** Extract unique lowercase hashtags (alnum + underscore, up to 50 chars) */
-function extractHashtags(text: string): string[] {
-  const set = new Set<string>();
-  const re = /#([A-Za-z0-9_]{1,50})/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) if (m[1]) set.add(m[1]!.toLowerCase());
-  return Array.from(set);
-}
 
 /** GET /api/posts — PUBLIC+ACTIVE, newest-first, cursor paginated. */
 export async function GET(req: NextRequest) {
@@ -83,10 +75,33 @@ export async function POST(req: NextRequest) {
   const visibility: Visibility =
     (['PUBLIC', 'FOLLOWERS', 'TRUSTED'] as const).includes(vRaw as any) ? (vRaw as Visibility) : 'PUBLIC';
 
-  const hashtags = extractHashtags(body);
+  const hashtags = extractTags(body);
 
-  const created = await prisma.post.create({
-    data: { sessionId: sid, profileId: profileId ?? null, body, visibility },
+  const created = await prisma.$transaction(async (tx) => {
+    const post = await tx.post.create({
+      data: { sessionId: sid, profileId: profileId ?? null, body, visibility },
+    });
+
+    if (hashtags.length) {
+      const tagRecords = await Promise.all(
+        hashtags.map((name) =>
+          tx.tag.upsert({
+            where: { name },
+            update: {},
+            create: { name },
+          })
+        )
+      );
+
+      if (tagRecords.length) {
+        await tx.postTag.createMany({
+          data: tagRecords.map((tag) => ({ postId: post.id, tagId: tag.id })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return post;
   });
 
   const res = NextResponse.json({ ok: true, post: created, hashtags, quota: gate.quota ?? null });

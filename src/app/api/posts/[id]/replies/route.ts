@@ -10,6 +10,7 @@ import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
 import { assertSameOrigin, requireJson } from '@/lib/security';
+import { extractTags } from '@/lib/hashtags';
 
 const REPLY_MAX = 500;
 
@@ -89,8 +90,33 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
   }
 
-  const created = await prisma.reply.create({
-    data: { postId, sessionId: sid, profileId: profileId ?? null, body, visibility: Visibility.PUBLIC },
+  const hashtags = extractTags(body);
+
+  const created = await prisma.$transaction(async (tx) => {
+    const reply = await tx.reply.create({
+      data: { postId, sessionId: sid, profileId: profileId ?? null, body, visibility: Visibility.PUBLIC },
+    });
+
+    if (hashtags.length) {
+      const tagRecords = await Promise.all(
+        hashtags.map((name) =>
+          tx.tag.upsert({
+            where: { name },
+            update: {},
+            create: { name },
+          })
+        )
+      );
+
+      if (tagRecords.length) {
+        await tx.replyTag.createMany({
+          data: tagRecords.map((tag) => ({ replyId: reply.id, tagId: tag.id })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return reply;
   });
 
   const res = NextResponse.json({ ok: true, reply: created, quota: gate.quota ?? null });

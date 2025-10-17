@@ -25,6 +25,7 @@ export default function AuthRequestPage() {
         setStatus(data.error || 'Failed to request link.');
       }
     } catch (err) {
+      console.error('Failed to request sign-in link', err);
       setStatus('Network error.');
     }
   }

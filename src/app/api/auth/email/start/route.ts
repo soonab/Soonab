@@ -20,14 +20,19 @@ export async function POST(req: Request) {
 
   // TODO: send email with link. For local testing you can log it:
   // e.g. http://localhost:3000/api/auth/email/callback?token=...&redirect=/me
-  const link = new URL(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/auth/email/callback`);
+  const link = new URL(
+    `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/auth/email/callback`
+  );
   link.searchParams.set('token', token);
   link.searchParams.set('redirect', redirect);
 
   // Replace this with your mailer
+  const json: { ok: true; link?: string } = { ok: true };
   if (process.env.NODE_ENV !== 'production') {
-    console.log('Magic link:', link.toString());
+    const linkString = link.toString();
+    console.log('Magic link:', linkString);
+    json.link = linkString;
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(json);
 }

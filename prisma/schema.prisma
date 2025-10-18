@@ -37,6 +37,12 @@ model Profile {
   score                ReputationScore?
   trustReceived        Trust[]            @relation("trusts_trustee")
   trustGiven           Trust[]            @relation("trusts_truster")
+  conversationsAsA     Conversation[]     @relation("ConversationMemberA")
+  conversationsAsB     Conversation[]     @relation("ConversationMemberB")
+  conversationsCreated Conversation[]     @relation("ConversationCreatedBy")
+  messagesSent         Message[]
+  dmBlocksInitiated    DMBlock[]          @relation("DMBlocker")
+  dmBlocksReceived     DMBlock[]          @relation("DMBlocked")
 }
 
 /// *
@@ -108,8 +114,8 @@ model Tag {
 model PostTag {
   postId String
   tagId  String
-  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([postId, tagId])
   @@index([tagId, postId])
@@ -118,8 +124,8 @@ model PostTag {
 model ReplyTag {
   replyId String
   tagId   String
-  reply   Reply @relation(fields: [replyId], references: [id], onDelete: Cascade)
-  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  reply   Reply  @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([replyId, tagId])
   @@index([tagId, replyId])
@@ -254,6 +260,61 @@ model Trust {
   @@index([createdAt(sort: Desc)])
 }
 
+/// *
+///  * Step-12 — Direct Messages (text-only, 1:1)
+enum ConversationStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+}
+
+model Conversation {
+  id            String             @id @default(cuid())
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  memberAId     String
+  memberBId     String
+  createdById   String
+  status        ConversationStatus @default(PENDING)
+  lastMessageAt DateTime?
+
+  memberA   Profile   @relation("ConversationMemberA", fields: [memberAId], references: [id])
+  memberB   Profile   @relation("ConversationMemberB", fields: [memberBId], references: [id])
+  createdBy Profile   @relation("ConversationCreatedBy", fields: [createdById], references: [id])
+  messages  Message[]
+  blocks    DMBlock[]
+
+  @@unique([memberAId, memberBId])
+  @@index([lastMessageAt, id])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  conversationId String
+  senderId       String
+  body           String   @db.Text
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       Profile      @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt, id])
+}
+
+model DMBlock {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  blockerId      String
+  blockedId      String
+  conversationId String
+
+  blocker      Profile      @relation("DMBlocker", fields: [blockerId], references: [id])
+  blocked      Profile      @relation("DMBlocked", fields: [blockedId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId, conversationId])
+}
+
 model Account {
   id         String       @id @default(cuid())
   userId     String
@@ -321,12 +382,15 @@ enum ModerationActionType {
   REMOVE
   BLOCK_PROFILE
   UNBLOCK_PROFILE
+  FLAG
 }
 
 enum ModerationTarget {
   POST
   REPLY
   PROFILE
+  CONVERSATION
+  MESSAGE
 }
 
 enum PenaltyKind {

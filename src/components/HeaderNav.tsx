@@ -10,6 +10,7 @@ type Item = { href: string; label: string };
 const ITEMS: Item[] = [
   { href: '/',         label: 'Home' },
   { href: '/explore',  label: 'Explore' },   // lights up later
+  { href: '/dm',       label: 'Direct Messages' },
   { href: '/me',       label: 'My profile' },
   { href: '/settings', label: 'Settings' },  // security polish in Step‑10
 ];

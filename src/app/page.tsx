@@ -9,8 +9,10 @@ import BodyText from '@/components/BodyText';
 import ScoreBadge from '@/components/ScoreBadge';
 import StarRater from '@/components/StarRater';
 import LoginCtaCard from '@/components/LoginCtaCard';
+import { AttachmentGrid } from '@/components/media/AttachmentGrid';
 import { getAuthedUserId } from '@/lib/auth';
 import { SITE } from '@/lib/site';
+import { serializeAttachments } from '@/lib/media';
 
 /**
  * Home = Public feed (chronological).
@@ -33,6 +35,13 @@ export default async function Home() {
       replies: {
         where: { visibility: 'PUBLIC', state: 'ACTIVE' },
         orderBy: { createdAt: 'asc' },
+      },
+      media: {
+        include: {
+          media: {
+            include: { variants: true },
+          },
+        },
       },
     },
   });
@@ -92,6 +101,19 @@ export default async function Home() {
           const sc = p.sessionId ? scoreBySid.get(p.sessionId) : null;
           const handle = prof?.handle ?? 'anon';
 
+          const attachments = serializeAttachments(
+            p.media.map((link) => ({
+              id: link.mediaId,
+              variants: link.media.variants.map((v) => ({
+                role: v.role,
+                key: v.key,
+                width: v.width,
+                height: v.height,
+                contentType: v.contentType,
+              })),
+            })),
+          );
+
           return (
             <li key={p.id} className="feed-card">
               {/* Post header */}
@@ -105,6 +127,8 @@ export default async function Home() {
 
               {/* Post body */}
               <BodyText text={p.body} />
+
+              <AttachmentGrid attachments={attachments} />
 
               {/* Post meta */}
               <div className="mt-2 text-xs text-gray-500">

@@ -11,6 +11,7 @@ import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
 import { assertSameOrigin, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
+import { serializeAttachments, type VariantRecord } from '@/lib/media';
 
 const POST_MAX = 500;
 
@@ -32,6 +33,32 @@ export async function GET(req: NextRequest) {
       : where,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit,
+    include: {
+      media: {
+        include: {
+          media: {
+            include: { variants: true },
+          },
+        },
+      },
+    },
+  });
+
+  const normalized = (items as any[]).map((item) => {
+    const attachments = serializeAttachments(
+      (item.media ?? []).map((link: any) => ({
+        id: link.mediaId,
+        variants: link.media.variants.map((v: any) => ({
+          role: v.role,
+          key: v.key,
+          width: v.width,
+          height: v.height,
+          contentType: v.contentType,
+        })),
+      })),
+    );
+    const { media: _join, ...rest } = item;
+    return { ...rest, media: attachments };
   });
 
   const nextCursor =
@@ -40,7 +67,7 @@ export async function GET(req: NextRequest) {
       : null;
 
   // Back-compat: keep `posts` while adding `items` + `nextCursor`
-  return NextResponse.json({ ok: true, items, posts: items, nextCursor });
+  return NextResponse.json({ ok: true, items: normalized, posts: normalized, nextCursor });
 }
 
 /** POST /api/posts — create */
@@ -55,6 +82,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: `Too long (max ${POST_MAX})` }, { status: 400 });
   }
 
+  const maxImages = Number(process.env.UPLOAD_MAX_IMAGES_PER_ITEM ?? 4);
+  const mediaIds = Array.isArray(payload?.mediaIds)
+    ? payload.mediaIds.map((x: unknown) => String(x)).filter(Boolean)
+    : [];
+  if (mediaIds.length > maxImages) {
+    return NextResponse.json({ ok: false, error: `Too many images (max ${maxImages})` }, { status: 400 });
+  }
+
   const jar = await cookies();
   let sid = jar.get('sid')?.value as string | undefined;
   let setCookie = false;
@@ -64,7 +99,11 @@ export async function POST(req: NextRequest) {
 
   const profileId = await getCurrentProfileId(); // string | null
 
-  const gate = await canCreatePost(sid, profileId ?? undefined);
+  if (mediaIds.length && !profileId) {
+    return NextResponse.json({ ok: false, error: 'Sign in required for media' }, { status: 403 });
+  }
+
+  const gate = await canCreatePost(sid, profileId ?? undefined, mediaIds.length);
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
 
   if (profileId && (await hasActivePostingPenalty(profileId))) {
@@ -77,10 +116,33 @@ export async function POST(req: NextRequest) {
 
   const hashtags = extractTags(body);
 
+  let mediaRecords: VariantRecord[] = [];
+  if (mediaIds.length) {
+    mediaRecords = await prisma.media.findMany({
+      where: {
+        id: { in: mediaIds },
+        ownerProfileId: profileId!,
+        status: 'READY',
+      },
+      include: {
+        variants: true,
+      },
+    });
+    if (mediaRecords.length !== mediaIds.length) {
+      return NextResponse.json({ ok: false, error: 'Invalid media selection' }, { status: 400 });
+    }
+  }
+
   const created = await prisma.$transaction(async (tx) => {
     const post = await tx.post.create({
       data: { sessionId: sid, profileId: profileId ?? null, body, visibility },
     });
+
+    if (mediaIds.length) {
+      await tx.postMedia.createMany({
+        data: mediaIds.map((mid: string) => ({ postId: post.id, mediaId: mid })),
+      });
+    }
 
     if (hashtags.length) {
       const tagRecords = await Promise.all(
@@ -104,7 +166,9 @@ export async function POST(req: NextRequest) {
     return post;
   });
 
-  const res = NextResponse.json({ ok: true, post: created, hashtags, quota: gate.quota ?? null });
+  const attachments = serializeAttachments(mediaRecords, mediaIds);
+
+  const res = NextResponse.json({ ok: true, post: { ...created, media: attachments }, hashtags, quota: gate.quota ?? null });
   if (setCookie) {
     res.cookies.set('sid', sid, {
       httpOnly: true,

@@ -53,6 +53,10 @@ class ZString implements BaseSchema<string> {
       return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
     }
   }
+
+  optional() {
+    return new ZOptional(this);
+  }
 }
 
 type Shape = Record<string, BaseSchema<unknown>>;
@@ -81,11 +85,138 @@ class ZObject<S extends Shape> implements BaseSchema<InferShape<S>> {
       return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
     }
   }
+
+  optional() {
+    return new ZOptional(this);
+  }
+}
+
+class ZNumber implements BaseSchema<number> {
+  private checks: ((value: number) => string | null)[] = [];
+
+  min(value: number) {
+    this.checks.push((input) => (input >= value ? null : `Number must be >= ${value}`));
+    return this;
+  }
+
+  max(value: number) {
+    this.checks.push((input) => (input <= value ? null : `Number must be <= ${value}`));
+    return this;
+  }
+
+  int() {
+    this.checks.push((input) => (Number.isInteger(input) ? null : 'Number must be an integer'));
+    return this;
+  }
+
+  positive() {
+    this.checks.push((input) => (input > 0 ? null : 'Number must be positive'));
+    return this;
+  }
+
+  parse(input: unknown): number {
+    if (typeof input !== 'number' || Number.isNaN(input)) {
+      throw new Error('Expected number');
+    }
+    for (const check of this.checks) {
+      const message = check(input);
+      if (message) throw new Error(message);
+    }
+    return input;
+  }
+
+  safeParse(input: unknown): SafeParseResult<number> {
+    try {
+      return { success: true, data: this.parse(input) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  }
+
+  optional() {
+    return new ZOptional(this);
+  }
+}
+
+class ZArray<T> implements BaseSchema<T[]> {
+  private maxLength: number | null = null;
+
+  constructor(private readonly inner: BaseSchema<T>) {}
+
+  max(length: number) {
+    this.maxLength = length;
+    return this;
+  }
+
+  parse(input: unknown): T[] {
+    if (!Array.isArray(input)) {
+      throw new Error('Expected array');
+    }
+    if (this.maxLength !== null && input.length > this.maxLength) {
+      throw new Error(`Array must contain at most ${this.maxLength} element(s)`);
+    }
+    return input.map((item) => this.inner.parse(item));
+  }
+
+  safeParse(input: unknown): SafeParseResult<T[]> {
+    try {
+      return { success: true, data: this.parse(input) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  }
+
+  optional() {
+    return new ZOptional(this);
+  }
+}
+
+class ZEnum<T extends string> implements BaseSchema<T> {
+  constructor(private readonly values: readonly T[]) {}
+
+  parse(input: unknown): T {
+    if (typeof input !== 'string' || !this.values.includes(input as T)) {
+      throw new Error('Invalid enum value');
+    }
+    return input as T;
+  }
+
+  safeParse(input: unknown): SafeParseResult<T> {
+    try {
+      return { success: true, data: this.parse(input) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  }
+
+  optional() {
+    return new ZOptional(this);
+  }
+}
+
+class ZOptional<T> implements BaseSchema<T | undefined> {
+  constructor(private readonly inner: BaseSchema<T>) {}
+
+  parse(input: unknown): T | undefined {
+    if (input === undefined || input === null) return undefined;
+    return this.inner.parse(input);
+  }
+
+  safeParse(input: unknown): SafeParseResult<T | undefined> {
+    try {
+      return { success: true, data: this.parse(input) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  }
 }
 
 export const z = {
   string: () => new ZString(),
   object: <S extends Shape>(shape: S) => new ZObject(shape),
+  number: () => new ZNumber(),
+  array: <T>(schema: BaseSchema<T>) => new ZArray(schema),
+  enum: <T extends string>(values: readonly T[]) => new ZEnum(values),
 };
 
 export type infer<T extends BaseSchema<unknown>> = T extends BaseSchema<infer R> ? R : never;

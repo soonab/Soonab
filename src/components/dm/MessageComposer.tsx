@@ -3,6 +3,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ImageUploader } from '@/components/media/ImageUploader';
 
 interface MessageComposerProps {
   conversationId: string;
@@ -16,6 +17,8 @@ export default function MessageComposer({ conversationId, disabled, disabledReas
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mediaIds, setMediaIds] = useState<string[]>([]);
+  const [uploaderKey, setUploaderKey] = useState(0);
 
   useEffect(() => {
     if (!disabled) {
@@ -39,7 +42,7 @@ export default function MessageComposer({ conversationId, disabled, disabledReas
       const res = await fetch(`/api/dm/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, mediaIds }),
       });
       if (res.status === 429) {
         const retry = res.headers.get('Retry-After');
@@ -50,6 +53,8 @@ export default function MessageComposer({ conversationId, disabled, disabledReas
         setError(message);
       } else {
         setBody('');
+        setMediaIds([]);
+        setUploaderKey((k) => k + 1);
         router.refresh();
       }
     } catch (err) {
@@ -82,11 +87,14 @@ export default function MessageComposer({ conversationId, disabled, disabledReas
         </p>
       )}
       {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-500">{body.length}/2000</span>
-        <button type="submit" className="btn" disabled={disabled || busy}>
-          {busy ? 'Sending…' : 'Send'}
-        </button>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-500">{body.length}/2000</span>
+          <button type="submit" className="btn" disabled={disabled || busy}>
+            {busy ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+        <ImageUploader key={uploaderKey} scope="dm" onChange={setMediaIds} />
       </div>
     </form>
   );

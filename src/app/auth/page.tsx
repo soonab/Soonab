@@ -19,13 +19,13 @@ export default function AuthRequestPage() {
       });
       const data = await res.json();
       if (data.ok) {
+        // In dev, the API returns a local “dev link” so you can click without email
         setLink(data.link);
         setStatus('Check the link below (dev mode).');
       } else {
         setStatus(data.error || 'Failed to request link.');
       }
-    } catch (err) {
-      console.error('Failed to request sign-in link', err);
+    } catch {
       setStatus('Network error.');
     }
   }
@@ -47,8 +47,7 @@ export default function AuthRequestPage() {
       {status && <p className="text-sm text-gray-400">{status}</p>}
       {link && (
         <p className="text-sm">
-          Dev link:&nbsp;
-          <a className="underline" href={link}>{link}</a>
+          Dev link:&nbsp;<a className="underline" href={link}>{link}</a>
         </p>
       )}
     </main>

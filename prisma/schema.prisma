@@ -1,14 +1,21 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  // Pooled (PgBouncer) for runtime
+  url               = env("DATABASE_URL")
+  // Direct connection for migrate/deploy
+  directUrl         = env("DATABASE_DIRECT_URL")
+  // Shadow DB (must be non-pooled host) for migrate dev
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 /// *
-///  * Users & Profiles (Step-5)
+//  * Users & Profiles (Step-5)
 model User {
   id        String       @id @default(cuid())
   email     String       @unique
@@ -46,7 +53,7 @@ model Profile {
 }
 
 /// *
-///  * Magic link tokens
+//  * Magic link tokens
 model MagicLinkToken {
   id        String    @id @default(cuid())
   email     String
@@ -59,14 +66,14 @@ model MagicLinkToken {
 }
 
 /// *
-///  * Setup marker
+//  * Setup marker
 model SetupCheck {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 }
 
 /// *
-///  * Posts & Replies
+//  * Posts & Replies
 model Post {
   id         String       @id @default(cuid())
   sessionId  String?
@@ -171,7 +178,7 @@ model ProfilePenalty {
 }
 
 /// *
-///  * Pseudonymous session profile (pre-accounts)
+//  * Pseudonymous session profile (pre-accounts)
 model SessionProfile {
   id            String             @id @default(cuid())
   sessionId     String             @unique
@@ -182,7 +189,7 @@ model SessionProfile {
 }
 
 /// *
-///  * Ratings (support session- and profile-based IDs)
+//  * Ratings (support session- and profile-based IDs)
 model ReputationRating {
   id              String          @id @default(cuid())
   targetSessionId String?
@@ -206,7 +213,7 @@ model ReputationRating {
 }
 
 /// *
-///  * Cached aggregates
+//  * Cached aggregates
 model ReputationScore {
   sessionId    String   @id
   count        Int      @default(0)
@@ -219,7 +226,7 @@ model ReputationScore {
 }
 
 /// *
-///  * Step-4 suspicion flags
+//  * Step-4 suspicion flags
 model ReputationFlag {
   id              String   @id @default(cuid())
   targetSessionId String
@@ -235,7 +242,7 @@ model ReputationFlag {
 }
 
 /// *
-///  * Step-6 audience edges
+//  * Step-6 audience edges
 model Follow {
   followerProfileId  String
   followingProfileId String
@@ -261,7 +268,7 @@ model Trust {
 }
 
 /// *
-///  * Step-12 — Direct Messages (text-only, 1:1)
+//  * Step-12 — Direct Messages (text-only, 1:1)
 enum ConversationStatus {
   PENDING
   ACTIVE
@@ -356,7 +363,7 @@ model OAuthState {
 }
 
 /// *
-///  * Visibility & Content State
+//  * Visibility & Content State
 enum Visibility {
   PUBLIC
   FOLLOWERS
@@ -370,7 +377,7 @@ enum ContentState {
 }
 
 /// *
-///  * Moderation — reports, actions, penalties
+//  * Moderation — reports, actions, penalties
 enum ReportTarget {
   POST
   REPLY
@@ -399,7 +406,7 @@ enum PenaltyKind {
 }
 
 /// *
-///  * Step-8 — Google OAuth v1
+//  * Step-8 — Google OAuth v1
 enum AuthProvider {
   GOOGLE
 }

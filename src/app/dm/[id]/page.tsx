@@ -9,10 +9,32 @@ import MessageComposer from '@/components/dm/MessageComposer';
 import AcceptInviteButton from '@/components/dm/AcceptInviteButton';
 import BlockConversationButton from '@/components/dm/BlockConversationButton';
 import ReportConversationForm from '@/components/dm/ReportConversationForm';
+import { AttachmentGrid } from '@/components/media/AttachmentGrid';
+import { serializeAttachments, type VariantRecord } from '@/lib/media';
 
 const messageInclude = {
   sender: { select: { id: true, handle: true, displayName: true } },
+  media: {
+    include: {
+      media: {
+        include: { variants: true },
+      },
+    },
+  },
 };
+
+function joinToVariants(join: { mediaId: string; media: { variants: { role: string; key: string; width: number; height: number; contentType: string }[] } }[]): VariantRecord[] {
+  return join.map((item) => ({
+    id: item.mediaId,
+    variants: item.media.variants.map((v) => ({
+      role: v.role,
+      key: v.key,
+      width: v.width,
+      height: v.height,
+      contentType: v.contentType,
+    })),
+  }));
+}
 
 function formatTimestamp(date: Date) {
   return new Date(date).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
@@ -143,8 +165,9 @@ export default async function ConversationPage({
           {messages.length === 0 && (
             <p className="text-sm text-gray-500">No messages yet.</p>
           )}
-          {messages.map((message) => {
+          {messages.map((message: any) => {
             const mine = message.senderId === profileId;
+            const attachments = serializeAttachments(joinToVariants(message.media ?? []));
             return (
               <div key={message.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                 <div
@@ -160,6 +183,7 @@ export default async function ConversationPage({
                     <span>{formatTimestamp(message.createdAt)}</span>
                   </div>
                   <div className="mt-1 whitespace-pre-wrap break-words">{message.body}</div>
+                  <AttachmentGrid attachments={attachments} />
                 </div>
               </div>
             );

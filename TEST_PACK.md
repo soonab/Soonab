@@ -62,3 +62,41 @@ curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/block -c B.txt -b B.txt
 curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/messages \
   -H 'Content-Type: application/json' -d '{"body":"still there?"}' -c A.txt -b A.txt | head -n 1
 ```
+
+## Step-13 — Media uploads
+
+```bash
+# 1) Sign + upload + finalize (requires valid AWS/S3 environment)
+TOK=$(csrf)
+RESP=$(curl -s -X POST http://localhost:3000/api/media/sign \
+  -H "Content-Type: application/json" \
+  -H "x-csrf-token: $TOK" \
+  -d '{"contentType":"image/png","size":1024,"scope":"post"}')
+MEDIA_ID=$(echo "$RESP" | jq -r '.mediaId')
+KEY=$(echo "$RESP" | jq -r '.key')
+URL=$(echo "$RESP" | jq -r '.url')
+
+# PUT the file to $URL, then finalize
+curl -s -X POST http://localhost:3000/api/media/finalize \
+  -H "Content-Type: application/json" \
+  -H "x-csrf-token: $TOK" \
+  -d "{\"mediaId\":\"$MEDIA_ID\",\"key\":\"$KEY\"}"
+
+# 2) Create a post with 3 images
+curl -s -X POST http://localhost:3000/api/posts \
+  -H "Content-Type: application/json" \
+  -H "x-csrf-token: $TOK" \
+  -d '{"body":"hello #first","visibility":"PUBLIC","mediaIds":["m1","m2","m3"]}'
+
+# 3) Exceed limit → expect 429 after quota used
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:3000/api/posts \
+  -H "Content-Type: application/json" \
+  -H "x-csrf-token: $TOK" \
+  -d '{"body":"too many","visibility":"PUBLIC","mediaIds":["mA","mB","mC","mD","mE"]}'
+
+# 4) DM message with images
+curl -s -X POST http://localhost:3000/api/dm/<cid>/messages \
+  -H "Content-Type: application/json" \
+  -H "x-csrf-token: $TOK" \
+  -d '{"body":"pics","mediaIds":["mA","mB"]}'
+```

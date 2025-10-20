@@ -3,6 +3,7 @@
 
 import { useState } from 'react'
 import type { Visibility } from '@prisma/client'
+import { ImageUploader } from '@/components/media/ImageUploader'
 
 const VIS_OPTS: Visibility[] = ['PUBLIC', 'FOLLOWERS', 'TRUSTED']
 
@@ -12,6 +13,8 @@ export default function Composer() {
   const [visibility, setVisibility] = useState<Visibility>('PUBLIC')
   const [msg, setMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [mediaIds, setMediaIds] = useState<string[]>([])
+  const [uploaderKey, setUploaderKey] = useState(0)
 
   const onPaste: React.ClipboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (!assistive) {
@@ -27,12 +30,12 @@ export default function Composer() {
     const r = await fetch('/api/posts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: text, visibility }),
+      body: JSON.stringify({ body: text, visibility, mediaIds }),
     })
     setBusy(false)
     if (r.status === 429) { setMsg('Posting quota reached.'); return }
     const j = await r.json()
-    if (j.ok) { setBody(''); setMsg(null); location.reload() }
+    if (j.ok) { setBody(''); setMediaIds([]); setUploaderKey(k => k + 1); setMsg(null); location.reload() }
     else { setMsg(j.error || 'Something went wrong.') }
   }
 
@@ -68,6 +71,9 @@ export default function Composer() {
         <button onClick={submit} disabled={busy} className="rounded bg-black text-white px-3 py-1 text-sm disabled:opacity-50">
           {busy ? 'Posting…' : 'Post'}
         </button>
+      </div>
+      <div className="mt-3">
+        <ImageUploader key={uploaderKey} scope="post" onChange={setMediaIds} />
       </div>
       {msg && <p className="mt-2 text-xs text-red-600">{msg}</p>}
     </div>

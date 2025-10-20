@@ -8,10 +8,21 @@ function cspValue() {
     'https://oauth2.googleapis.com',
     'https://www.googleapis.com',
   ];
+  const img = ["'self'", 'data:', 'blob:'];
+  const publicBase = process.env.S3_PUBLIC_BASE_URL;
+  if (publicBase) {
+    try {
+      const origin = new URL(publicBase).origin;
+      connect.push(origin);
+      img.push(origin);
+    } catch {
+      // ignore invalid URL
+    }
+  }
   return [
     "default-src 'self'",
     "frame-ancestors 'none'",
-    "img-src 'self' data: blob:",
+    `img-src ${img.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // dev-friendly
     `connect-src ${connect.join(' ')}`,

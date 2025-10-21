@@ -1,15 +1,17 @@
 // src/app/api/posts/route.ts
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { Visibility } from '@prisma/client';
 import { canCreatePost } from '@/lib/limits';
 import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
-import { assertSameOrigin, requireJson } from '@/lib/security';
+import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
 import { serializeAttachments, type VariantRecord } from '@/lib/media';
 
@@ -36,9 +38,7 @@ export async function GET(req: NextRequest) {
     include: {
       media: {
         include: {
-          media: {
-            include: { variants: true },
-          },
+          media: { include: { variants: true } },
         },
       },
     },
@@ -63,7 +63,10 @@ export async function GET(req: NextRequest) {
 
   const nextCursor =
     items.length === limit
-      ? encodeCursor({ createdAt: items[items.length - 1]!.createdAt.toISOString(), id: items[items.length - 1]!.id })
+      ? encodeCursor({
+          createdAt: items[items.length - 1]!.createdAt.toISOString(),
+          id: items[items.length - 1]!.id,
+        })
       : null;
 
   // Back-compat: keep `posts` while adding `items` + `nextCursor`
@@ -72,8 +75,16 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/posts — create */
 export async function POST(req: NextRequest) {
-  // Security posture
-  assertSameOrigin(req);
+  // 🛡️ ALWAYS enforce: same-origin + CSRF
+  // - If the request has an Origin (browser), host must match.
+  // - If the request has no Origin (Node/cURL), a valid CSRF header+cookie must be present.
+  {
+    const so = assertSameOrigin(req);
+    if (so) return so;
+    const cs = requireCsrf(req);
+    if (cs) return cs;
+  }
+
   const payload = await requireJson<any>(req);
 
   const body = String(payload?.body ?? '').trim();
@@ -87,9 +98,13 @@ export async function POST(req: NextRequest) {
     ? payload.mediaIds.map((x: unknown) => String(x)).filter(Boolean)
     : [];
   if (mediaIds.length > maxImages) {
-    return NextResponse.json({ ok: false, error: `Too many images (max ${maxImages})` }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: `Too many images (max ${maxImages})` },
+      { status: 400 }
+    );
   }
 
+  // Session cookie (sid) for anonymous posting quotas
   const jar = await cookies();
   let sid = jar.get('sid')?.value as string | undefined;
   let setCookie = false;
@@ -103,6 +118,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Sign in required for media' }, { status: 403 });
   }
 
+  // Quota: 1 (post) + mediaIds.length (images)
   const gate = await canCreatePost(sid, profileId ?? undefined, mediaIds.length);
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
 
@@ -119,14 +135,8 @@ export async function POST(req: NextRequest) {
   let mediaRecords: VariantRecord[] = [];
   if (mediaIds.length) {
     mediaRecords = await prisma.media.findMany({
-      where: {
-        id: { in: mediaIds },
-        ownerProfileId: profileId!,
-        status: 'READY',
-      },
-      include: {
-        variants: true,
-      },
+      where: { id: { in: mediaIds }, ownerProfileId: profileId!, status: 'READY' },
+      include: { variants: true },
     });
     if (mediaRecords.length !== mediaIds.length) {
       return NextResponse.json({ ok: false, error: 'Invalid media selection' }, { status: 400 });
@@ -168,7 +178,13 @@ export async function POST(req: NextRequest) {
 
   const attachments = serializeAttachments(mediaRecords, mediaIds);
 
-  const res = NextResponse.json({ ok: true, post: { ...created, media: attachments }, hashtags, quota: gate.quota ?? null });
+  const res = NextResponse.json({
+    ok: true,
+    post: { ...created, media: attachments },
+    hashtags,
+    quota: gate.quota ?? null,
+  });
+
   if (setCookie) {
     res.cookies.set('sid', sid, {
       httpOnly: true,

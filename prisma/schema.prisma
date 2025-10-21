@@ -304,8 +304,8 @@ model Message {
   senderId       String
   body           String   @db.Text
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       Profile      @relation(fields: [senderId], references: [id])
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       Profile          @relation(fields: [senderId], references: [id])
   media        DMMessageMedia[]
 
   @@index([conversationId, createdAt, id])
@@ -404,21 +404,21 @@ enum ModerationTarget {
 }
 
 model Media {
-  id              String        @id @default(cuid())
-  ownerProfileId  String
-  kind            MediaKind     @default(IMAGE)
-  status          MediaStatus   @default(UPLOADING)
-  ext             String
-  contentType     String
-  sizeBytes       Int
-  width           Int?
-  height          Int?
-  variants        MediaVariant[]
-  posts           PostMedia[]
-  messages        DMMessageMedia[]
-  createdAt       DateTime      @default(now())
-  deletedAt       DateTime?
-  ownerProfile    Profile       @relation(fields: [ownerProfileId], references: [id])
+  id             String           @id @default(cuid())
+  ownerProfileId String
+  kind           MediaKind        @default(IMAGE)
+  status         MediaStatus      @default(UPLOADING)
+  ext            String
+  contentType    String
+  sizeBytes      Int
+  width          Int?
+  height         Int?
+  variants       MediaVariant[]
+  posts          PostMedia[]
+  messages       DMMessageMedia[]
+  createdAt      DateTime         @default(now())
+  deletedAt      DateTime?
+  ownerProfile   Profile          @relation(fields: [ownerProfileId], references: [id])
 
   @@index([ownerProfileId, createdAt])
 }
@@ -439,8 +439,8 @@ model MediaVariant {
 model PostMedia {
   postId  String
   mediaId String
-  post    Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
-  media   Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  post    Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  media   Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
 
   @@id([postId, mediaId])
 }

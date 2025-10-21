@@ -1,38 +1,81 @@
 // src/lib/security/index.ts
-import type { NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 
-/** Enforce same-origin for state-changing requests. */
-export function assertSameOrigin(req: NextRequest): void {
-  const origin = req.headers.get('origin');
-  const host = req.headers.get('host');
-  if (!origin || !host) return;
-  try {
-    const u = new URL(origin);
-    if (u.host !== host) throw new Error('bad_origin');
-  } catch {
-    throw new Error('bad_origin');
-  }
+/** JSON helper to build a 4xx response */
+function deny(status: number, error: string) {
+  return NextResponse.json({ ok: false, error }, { status });
 }
 
-/** Require JSON content-type and parse body. */
-export async function requireJson<T = unknown>(req: NextRequest): Promise<T> {
+/**
+ * Same‑origin guard for state‑changing requests.
+ * - Browser requests: require Origin host === Host
+ * - Origin‑less (Node/cURL): require CSRF header to match cookie
+ * Returns NextResponse (403) on failure, otherwise undefined.
+ */
+export function assertSameOrigin(req: NextRequest): NextResponse | undefined {
+  const host = req.headers.get('host') || '';
+  const origin = req.headers.get('origin');
+
+  if (origin) {
+    try {
+      const o = new URL(origin);
+      if (o.host === host) return;
+    } catch {/* fallthrough */}
+    return deny(403, 'Same-origin required');
+  }
+
+  // No Origin → Node/cURL; must present valid CSRF to proceed
+  const header = req.headers.get('x-csrf');
+  const cookie = req.cookies.get('csrf')?.value;
+  if (header && cookie && header === cookie) return;
+
+  return deny(403, 'Same-origin required');
+}
+
+/**
+ * CSRF double‑submit check.
+ * Returns NextResponse (403) on failure, otherwise undefined.
+ */
+export function requireCsrf(req: NextRequest): NextResponse | undefined {
+  const header = req.headers.get('x-csrf');
+  const cookie = req.cookies.get('csrf')?.value;
+  if (!header || !cookie || header !== cookie) {
+    return deny(403, 'Invalid CSRF');
+  }
+  return;
+}
+
+/**
+ * Parse JSON; optionally validate via a "zod‑like" schema (safeParse).
+ * Avoids importing z types so TypeScript doesn’t complain.
+ */
+export async function requireJson<T = unknown>(
+  req: NextRequest,
+  schema?: { safeParse?: (data: unknown) => { success: boolean; data: T; error: unknown } }
+): Promise<T> {
   const ct = (req.headers.get('content-type') || '').toLowerCase();
-  if (!ct.includes('application/json')) throw new Error('bad_content_type');
-  const data = await req.json().catch(() => null);
-  if (data === null || data === undefined) throw new Error('invalid_json');
+  if (!ct.includes('application/json')) {
+    throw deny(415, 'Invalid content-type');
+  }
+  let data: unknown;
+  try {
+    data = await req.json();
+  } catch {
+    throw deny(400, 'Invalid JSON');
+  }
+  if (schema?.safeParse) {
+    const parsed = schema.safeParse(data);
+    if (!parsed.success) throw deny(400, 'Invalid body');
+    return parsed.data;
+  }
   return data as T;
 }
 
-/** Extract client IP (works behind proxies). */
+/** Best‑effort client IP for rate‑limits. */
 export function clientIp(req: NextRequest): string {
-  const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  if (first) return first;
-  const xr = req.headers.get('x-real-ip')?.trim();
-  if (xr) return xr;
-  const ra = req.headers.get('x-remote-addr')?.trim();
-  if (ra) return ra;
-  return 'local';
+  const xff = req.headers.get('x-forwarded-for');
+  if (xff) return xff.split(',')[0]!.trim();
+  const real = req.headers.get('x-real-ip');
+  if (real) return real.trim();
+  return (req as any).ip || '127.0.0.1';
 }
-
-/** Re-export rate limiter so legacy imports keep working. */
-export { limitRequest } from '../ratelimit';

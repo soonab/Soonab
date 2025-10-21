@@ -18,27 +18,14 @@ interface ImageUploaderProps {
   onChange(mediaIds: string[]): void;
 }
 
-function safeJson<T = any>(res: Response): Promise<T> {
-  return res
-    .text()
-    .then((t) => {
-      try {
-        return JSON.parse(t);
-      } catch {
-        throw new Error(t || `${res.status} ${res.statusText}`);
-      }
-    });
-}
-
 export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
 
-  // --- Single-file only ---
-  const maxImages = 1;
+  const maxImages = 1; // one image at a time
   const maxMb = useMemo(
     () => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8),
-    [],
+    []
   );
 
   useEffect(() => {
@@ -47,13 +34,13 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
 
   const remaining = Math.max(0, maxImages - items.length);
 
+  // ✅ Type-safe pickOne fix for TS
   const pickOne = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
-    if (remaining <= 0) return;
-
-    const file = files[0]; // single file only
+    const file = files.item(0);
+    if (!file) return; // TS ensures file is a File
     setItems((prev) => [...prev, { file, status: 'idle' }]);
-  }, [remaining]);
+  }, []);
 
   const handleSelect: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     pickOne(e.target.files);
@@ -72,11 +59,9 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
       const sign = await fetch('/api/media/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // include filename for servers that validate/derive extension
         body: JSON.stringify({ filename: item.file.name, contentType: item.file.type, size: item.file.size, scope }),
       });
-
-      const signJson = await safeJson(sign);
+      const signJson = await sign.json();
       if (!sign.ok || !signJson.ok) throw new Error(signJson.error || 'Unable to sign upload');
 
       setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'uploading', key: signJson.key, mediaId: signJson.mediaId } : it)));
@@ -86,7 +71,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         headers: { 'Content-Type': item.file.type },
         body: item.file,
       });
-      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+      if (!put.ok) throw new Error('Upload failed');
 
       setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'finalizing' } : it)));
 
@@ -95,8 +80,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mediaId: signJson.mediaId, key: signJson.key }),
       });
-
-      const done = await safeJson(finalize);
+      const done = await finalize.json();
       if (!finalize.ok || !done.ok) throw new Error(done.error || 'Unable to finalize upload');
 
       setItems((prev) =>
@@ -108,8 +92,8 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
                 urlThumb: done.urlThumb,
                 urlLarge: done.urlLarge,
               }
-            : it,
-        ),
+            : it
+        )
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed';
@@ -132,7 +116,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
 
   const handleDrop: React.DragEventHandler<HTMLDivElement> = (event) => {
     event.preventDefault();
-    pickOne(event.dataTransfer.files); // single file only
+    pickOne(event.dataTransfer.files);
   };
 
   const handleDragOver: React.DragEventHandler<HTMLDivElement> = (event) => {
@@ -154,7 +138,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         ref={inputRef}
         type="file"
         accept="image/jpeg,image/png,image/webp"
-        multiple={false}      // single-select
+        multiple={false}
         hidden
         onChange={handleSelect}
       />
@@ -162,7 +146,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
       {items.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-2">
-            {items.slice(0, maxImages).map((item, index) => (
+            {items.map((item, index) => (
               <div key={`${index}-${item.mediaId ?? item.file.name}`} className="relative overflow-hidden rounded border bg-white">
                 {item.urlThumb ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -172,8 +156,8 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
                     {item.status === 'error'
                       ? item.error ?? 'Upload failed'
                       : item.status === 'done'
-                        ? 'Processing…'
-                        : 'Ready to upload'}
+                      ? 'Processing…'
+                      : 'Ready to upload'}
                   </div>
                 )}
                 <button

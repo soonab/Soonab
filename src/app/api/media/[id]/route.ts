@@ -3,9 +3,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { assertSameOrigin } from '@/lib/security';
 import { getCurrentProfileId } from '@/lib/auth';
-import { DeleteObjectCommand, ListObjectsV2Command, getS3Client, getBucketName } from '@/lib/s3';
+import {
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  getS3Client,
+  getBucketName,
+} from '@/lib/s3';
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+// 🔧 Next 15.5 requires ctx.params to be awaited (Promise<{id:string}>)
+type Params = { id: string };
+
+export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> }) {
+  const { id } = await ctx.params; // 👈 important change
+
   try {
     assertSameOrigin(req);
   } catch {
@@ -18,7 +28,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   const media = await prisma.media.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: { posts: true, messages: true },
   });
 
@@ -33,22 +43,26 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const bucket = getBucketName();
   const s3 = getS3Client();
   const prefix = `public/${profileId}/${media.id}/`;
+
   const existing = await s3
     .send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }))
     .catch(() => ({ Contents: [] as { Key?: string }[] }));
 
   const contents: Array<{ Key?: string }> = existing.Contents ?? [];
-  const deletable = contents.filter((entry): entry is { Key: string } => typeof entry.Key === 'string');
+  const deletable = contents.filter(
+    (entry): entry is { Key: string } => typeof entry.Key === 'string',
+  );
+
   if (deletable.length) {
     await Promise.all(
-      deletable.map((obj: { Key: string }) =>
-        s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: obj.Key })).catch(() => undefined)
-      )
+      deletable.map((obj) =>
+        s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: obj.Key })).catch(() => undefined),
+      ),
     );
   }
 
   await prisma.media.update({
-    where: { id: params.id },
+    where: { id },
     data: { status: 'DELETED', deletedAt: new Date() },
   });
 

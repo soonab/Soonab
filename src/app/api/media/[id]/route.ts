@@ -10,11 +10,11 @@ import {
   getBucketName,
 } from '@/lib/s3';
 
-// 🔧 Next 15.5 requires ctx.params to be awaited (Promise<{id:string}>)
+// Next 15.5: context.params is a Promise — must await it
 type Params = { id: string };
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> }) {
-  const { id } = await ctx.params; // 👈 important change
+  const { id } = await ctx.params; // ← important
 
   try {
     assertSameOrigin(req);

@@ -1,20 +1,27 @@
-import { PrismaClient } from '@prisma/client'
-const prisma = new PrismaClient()
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+
 async function main() {
+  const required = ['Conversation','Message','DMBlock']; // DMBlock optional in some designs
   try {
-    const tables = await prisma.$queryRaw<Array<{ tablename: string }>>`
-      SELECT tablename FROM pg_tables WHERE schemaname = 'public'
-    `
-    const names = tables.map(t => t.tablename).sort()
-    const required = ['Conversation','Message','DMBlock']
-    const missing = required.filter(r => !names.includes(r))
-    console.log('Tables:', names.join(', ') || '(none)')
-    if (missing.length) {
-      console.error('❌ Missing tables:', missing.join(', '))
-      process.exitCode = 1
-    } else {
-      console.log('✅ DM tables present')
+    const exists = async (name: string) => {
+      const res = await prisma.$queryRaw<{ reg: string | null }[]>`
+        SELECT to_regclass(${`public."${name.replace(/"/g,'""')}"`}) AS reg
+      `;
+      return !!res[0]?.reg;
+    };
+    const missing: string[] = [];
+    for (const t of required) {
+      if (!(await exists(t))) missing.push(t);
     }
-  } finally { await prisma.$disconnect() }
+    if (missing.length) {
+      console.error('❌ Missing tables:', missing.join(', '));
+      process.exit(1);
+    } else {
+      console.log('✅ DM tables present');
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
 }
-main()
+main();

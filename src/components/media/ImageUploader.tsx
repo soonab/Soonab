@@ -18,29 +18,45 @@ interface ImageUploaderProps {
   onChange(mediaIds: string[]): void;
 }
 
+function safeJson<T = any>(res: Response): Promise<T> {
+  return res
+    .text()
+    .then((t) => {
+      try {
+        return JSON.parse(t);
+      } catch {
+        throw new Error(t || `${res.status} ${res.statusText}`);
+      }
+    });
+}
+
 export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
-  const maxImages = useMemo(() => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_IMAGES_PER_ITEM ?? process.env.UPLOAD_MAX_IMAGES_PER_ITEM ?? 4), []);
-  const maxMb = useMemo(() => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8), []);
+
+  // --- Single-file only ---
+  const maxImages = 1;
+  const maxMb = useMemo(
+    () => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8),
+    [],
+  );
 
   useEffect(() => {
     onChange(items.filter((it) => it.status === 'done' && it.mediaId).map((it) => it.mediaId!));
   }, [items, onChange]);
 
-  const remaining = maxImages - items.length;
+  const remaining = Math.max(0, maxImages - items.length);
 
-  const pickFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    const next = Array.from(files)
-      .slice(0, Math.max(0, remaining))
-      .map<UploadItem>((file) => ({ file, status: 'idle' }));
-    if (!next.length) return;
-    setItems((prev) => [...prev, ...next]);
+  const pickOne = useCallback((files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    if (remaining <= 0) return;
+
+    const file = files[0]; // single file only
+    setItems((prev) => [...prev, { file, status: 'idle' }]);
   }, [remaining]);
 
   const handleSelect: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    pickFiles(e.target.files);
+    pickOne(e.target.files);
     e.target.value = '';
   };
 
@@ -56,9 +72,11 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
       const sign = await fetch('/api/media/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contentType: item.file.type, size: item.file.size, scope }),
+        // include filename for servers that validate/derive extension
+        body: JSON.stringify({ filename: item.file.name, contentType: item.file.type, size: item.file.size, scope }),
       });
-      const signJson = await sign.json();
+
+      const signJson = await safeJson(sign);
       if (!sign.ok || !signJson.ok) throw new Error(signJson.error || 'Unable to sign upload');
 
       setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'uploading', key: signJson.key, mediaId: signJson.mediaId } : it)));
@@ -68,7 +86,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         headers: { 'Content-Type': item.file.type },
         body: item.file,
       });
-      if (!put.ok) throw new Error('Upload failed');
+      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
 
       setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'finalizing' } : it)));
 
@@ -77,7 +95,8 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mediaId: signJson.mediaId, key: signJson.key }),
       });
-      const done = await finalize.json();
+
+      const done = await safeJson(finalize);
       if (!finalize.ok || !done.ok) throw new Error(done.error || 'Unable to finalize upload');
 
       setItems((prev) =>
@@ -111,11 +130,9 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
 
   const hasPending = items.some((item) => ['signing', 'uploading', 'finalizing'].includes(item.status));
 
-  const gridCols = items.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-
   const handleDrop: React.DragEventHandler<HTMLDivElement> = (event) => {
     event.preventDefault();
-    pickFiles(event.dataTransfer.files);
+    pickOne(event.dataTransfer.files); // single file only
   };
 
   const handleDragOver: React.DragEventHandler<HTMLDivElement> = (event) => {
@@ -126,16 +143,25 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
     <div className="space-y-3" onDragOver={handleDragOver} onDrop={handleDrop}>
       <div className="flex items-center gap-3">
         <button type="button" className="btn" onClick={() => inputRef.current?.click()} disabled={remaining <= 0}>
-          Add images
+          Add image
         </button>
         <span className="text-xs text-gray-500">
           {Math.min(items.length, maxImages)} / {maxImages}
         </span>
       </div>
-      <input ref={inputRef} type="file" accept="image/*" multiple hidden onChange={handleSelect} />
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple={false}      // single-select
+        hidden
+        onChange={handleSelect}
+      />
+
       {items.length > 0 && (
         <>
-          <div className={`grid ${gridCols} gap-2`}>
+          <div className="grid grid-cols-1 gap-2">
             {items.slice(0, maxImages).map((item, index) => (
               <div key={`${index}-${item.mediaId ?? item.file.name}`} className="relative overflow-hidden rounded border bg-white">
                 {item.urlThumb ? (
@@ -143,7 +169,11 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
                   <img src={item.urlThumb} alt="" className="h-full w-full object-cover" />
                 ) : (
                   <div className="flex h-28 items-center justify-center text-xs text-gray-500">
-                    {item.status === 'error' ? item.error ?? 'Upload failed' : item.status === 'done' ? 'Processing…' : 'Ready to upload'}
+                    {item.status === 'error'
+                      ? item.error ?? 'Upload failed'
+                      : item.status === 'done'
+                        ? 'Processing…'
+                        : 'Ready to upload'}
                   </div>
                 )}
                 <button
@@ -156,11 +186,12 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
               </div>
             ))}
           </div>
+
           <div className="flex items-center justify-between">
             <button type="button" className="btn" onClick={startUploads} disabled={hasPending || items.length === 0}>
               Upload
             </button>
-            <span className="text-xs text-gray-500">Only JPEG, PNG, or WebP up to {maxMb} MB each.</span>
+            <span className="text-xs text-gray-500">Only JPEG, PNG, or WebP up to {maxMb} MB.</span>
           </div>
         </>
       )}

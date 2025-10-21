@@ -2,6 +2,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiFetch } from '@/lib/csrf-client';
 
 type UploadItem = {
   file: File;
@@ -22,7 +23,8 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
 
-  const maxImages = 1; // one image at a time
+  // Your current UI allows one image; backend supports more (env).
+  const maxImages = 1;
   const maxMb = useMemo(
     () => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8),
     []
@@ -34,11 +36,10 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
 
   const remaining = Math.max(0, maxImages - items.length);
 
-  // ✅ Type-safe pickOne fix for TS
   const pickOne = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
     const file = files.item(0);
-    if (!file) return; // TS ensures file is a File
+    if (!file) return;
     setItems((prev) => [...prev, { file, status: 'idle' }]);
   }, []);
 
@@ -55,18 +56,27 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, status: 'signing', error: undefined } : item)));
     const item = items[index];
     if (!item) return;
+
     try {
-      const sign = await fetch('/api/media/sign', {
+      // 1) SIGN (with CSRF)
+      const signRes = await apiFetch('/api/media/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: item.file.name, contentType: item.file.type, size: item.file.size, scope }),
+        body: JSON.stringify({
+          contentType: item.file.type,
+          size: item.file.size,
+          scope, // 'post' or 'dm'
+        }),
       });
-      const signJson = await sign.json();
-      if (!sign.ok || !signJson.ok) throw new Error(signJson.error || 'Unable to sign upload');
+      const s = await signRes.json();
+      if (!signRes.ok || !s?.ok) throw new Error(s?.error || 'Unable to sign upload');
 
-      setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'uploading', key: signJson.key, mediaId: signJson.mediaId } : it)));
+      setItems((prev) =>
+        prev.map((it, i) => (i === index ? { ...it, status: 'uploading', key: s.key, mediaId: s.mediaId } : it))
+      );
 
-      const put = await fetch(signJson.url, {
+      // 2) PUT to S3 (no CSRF needed to S3)
+      const put = await fetch(s.url, {
         method: 'PUT',
         headers: { 'Content-Type': item.file.type },
         body: item.file,
@@ -75,13 +85,14 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
 
       setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'finalizing' } : it)));
 
-      const finalize = await fetch('/api/media/finalize', {
+      // 3) FINALIZE (with CSRF)
+      const finRes = await apiFetch('/api/media/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mediaId: signJson.mediaId, key: signJson.key }),
+        body: JSON.stringify({ mediaId: s.mediaId, key: s.key }),
       });
-      const done = await finalize.json();
-      if (!finalize.ok || !done.ok) throw new Error(done.error || 'Unable to finalize upload');
+      const done = await finRes.json();
+      if (!finRes.ok || !done?.ok) throw new Error(done?.error || 'Unable to finalize upload');
 
       setItems((prev) =>
         prev.map((it, i) =>
@@ -118,7 +129,6 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
     event.preventDefault();
     pickOne(event.dataTransfer.files);
   };
-
   const handleDragOver: React.DragEventHandler<HTMLDivElement> = (event) => {
     event.preventDefault();
   };
@@ -157,7 +167,7 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
                       ? item.error ?? 'Upload failed'
                       : item.status === 'done'
                       ? 'Processing…'
-                      : 'Ready to upload'}
+                      : item.status}
                   </div>
                 )}
                 <button

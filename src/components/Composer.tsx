@@ -1,42 +1,68 @@
 // src/components/Composer.tsx
-'use client'
+'use client';
 
-import { useState } from 'react'
-import type { Visibility } from '@prisma/client'
-import { ImageUploader } from '@/components/media/ImageUploader'
+import { useState } from 'react';
+import type { Visibility } from '@prisma/client';
+import { ImageUploader } from '@/components/media/ImageUploader';
+import { apiFetch } from '@/lib/csrf-client';
 
-const VIS_OPTS: Visibility[] = ['PUBLIC', 'FOLLOWERS', 'TRUSTED']
+const VIS_OPTS: Visibility[] = ['PUBLIC', 'FOLLOWERS', 'TRUSTED'];
+const POST_MAX = 500;
+
+async function submitPost(payload: { body: string; visibility: Visibility; mediaIds?: string[] }) {
+  const res = await apiFetch('/api/posts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let errMsg = `Post failed (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.error) errMsg = j.error;
+    } catch {}
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
 
 export default function Composer() {
-  const [body, setBody] = useState('')
-  const [assistive, setAssistive] = useState(false)
-  const [visibility, setVisibility] = useState<Visibility>('PUBLIC')
-  const [msg, setMsg] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [mediaIds, setMediaIds] = useState<string[]>([])
-  const [uploaderKey, setUploaderKey] = useState(0)
+  const [body, setBody] = useState('');
+  const [assistive, setAssistive] = useState(false);
+  const [visibility, setVisibility] = useState<Visibility>('PUBLIC');
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [mediaIds, setMediaIds] = useState<string[]>([]);
+  const [uploaderKey, setUploaderKey] = useState(0);
 
   const onPaste: React.ClipboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (!assistive) {
-      e.preventDefault()
-      setMsg('Paste blocked to encourage typed input. Toggle Assistive Mode if needed.')
+      e.preventDefault();
+      setMsg('Paste blocked to encourage typed input. Toggle Assistive Mode if needed.');
     }
-  }
+  };
 
   async function submit() {
-    const text = body.trim()
-    if (!text) { setMsg('Type something first.'); return }
-    setBusy(true); setMsg(null)
-    const r = await fetch('/api/posts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: text, visibility, mediaIds }),
-    })
-    setBusy(false)
-    if (r.status === 429) { setMsg('Posting quota reached.'); return }
-    const j = await r.json()
-    if (j.ok) { setBody(''); setMediaIds([]); setUploaderKey(k => k + 1); setMsg(null); location.reload() }
-    else { setMsg(j.error || 'Something went wrong.') }
+    const text = body.trim();
+    if (!text) { setMsg('Type something first.'); return; }
+    if (text.length > POST_MAX) { setMsg(`Too long (max ${POST_MAX}).`); return; }
+
+    setBusy(true); setMsg(null);
+    try {
+      const data = await submitPost({ body: text, visibility, mediaIds });
+      // Reset on success
+      setBody(''); setMediaIds([]); setUploaderKey(k => k + 1); setMsg(null);
+      // Reload to show the new post at the top (chronological feed)
+      location.reload();
+    } catch (e: any) {
+      if (String(e?.message || '').toLowerCase().includes('429')) {
+        setMsg('Posting quota reached.');
+      } else {
+        setMsg(e?.message || 'Something went wrong.');
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -47,7 +73,7 @@ export default function Composer() {
         onChange={e => setBody(e.target.value)}
         onPaste={onPaste}
         rows={4}
-        maxLength={500}
+        maxLength={POST_MAX}
         className="w-full rounded border p-2 outline-none"
         placeholder="Type your thought… #hashtags work"
       />
@@ -72,10 +98,13 @@ export default function Composer() {
           {busy ? 'Posting…' : 'Post'}
         </button>
       </div>
+
       <div className="mt-3">
+        {/* Your uploader is configured for 1 image; backend allows up to env limit. */}
         <ImageUploader key={uploaderKey} scope="post" onChange={setMediaIds} />
       </div>
+
       {msg && <p className="mt-2 text-xs text-red-600">{msg}</p>}
     </div>
-  )
+  );
 }

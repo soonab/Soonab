@@ -10,6 +10,7 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
+    "verify:step14": "bash scripts/verify_step14.sh",
     "db:status": "prisma migrate status",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force && prisma generate",

@@ -6,11 +6,11 @@ import { apiFetch } from '@/lib/csrf-client';
 
 type Props = {
   slug: string;
-  initialJoined: boolean;
+  initialJoined?: boolean;
   signedIn: boolean;
 };
 
-export default function SpaceJoinButton({ slug, initialJoined, signedIn }: Props) {
+export default function SpaceJoinButton({ slug, initialJoined = false, signedIn }: Props) {
   const [joined, setJoined] = useState(initialJoined);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();

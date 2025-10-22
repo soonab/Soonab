@@ -98,9 +98,13 @@ model Post {
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
-  @@unique([createdAt, id], map: "uq_post_created_id")
-  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_post_created_id_desc")
-  @@index([spaceId, createdAt, id])
+
+  // Composite unique used for deterministic chrono cursors.
+  // Alias `createdAt_id` is referenced in Prisma Client queries.
+  @@unique([createdAt, id], name: "createdAt_id", map: "uq_post_created_id")
+
+  // Space feed index (filter + order). The unique above already backs ORDER BY.
+  @@index([spaceId, createdAt, id], map: "idx_post_space_created_id")
 }
 
 model Reply {

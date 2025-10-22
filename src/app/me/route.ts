@@ -1,16 +1,31 @@
+// src/app/me/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { getCurrentProfileId } from '@/lib/auth';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const jar = await cookies();
-  const pid = jar.get('pid')?.value;
-  const { origin } = new URL(req.url);
+  // Use the same helper your other APIs use (works with Google OAuth + email links)
+  const pid = await getCurrentProfileId();
+  const origin = new URL(req.url);
 
-  if (!pid) return NextResponse.redirect(new URL('/', origin));
+  // Not signed in -> go to login
+  if (!pid) {
+    return NextResponse.redirect(new URL('/login', origin));
+  }
 
-  const prof = await prisma.profile.findUnique({ where: { id: pid }, select: { handle: true } });
-  if (!prof) return NextResponse.redirect(new URL('/', origin));
+  // Find the owner handle
+  const prof = await prisma.profile.findUnique({
+    where: { id: pid },
+    select: { handle: true },
+  });
 
+  // No handle yet -> send to settings to finish setup
+  if (!prof?.handle) {
+    return NextResponse.redirect(new URL('/settings', origin));
+  }
+
+  // Happy path -> jump to /s/<handle>
   return NextResponse.redirect(new URL(`/s/${prof.handle}`, origin));
 }

@@ -2,7 +2,9 @@
   "name": "soonab",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=20 <21" },
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "pnpm prisma migrate deploy && next build --turbopack",
@@ -16,12 +18,13 @@
     "db:reset": "prisma migrate reset --force && prisma generate",
     "db:doctor": "tsx scripts/db-doctor.ts",
     "db:resolve:rolledback:step11": "prisma migrate resolve --rolled-back 20251016120000_step11_tags && prisma migrate deploy",
-    "db:resolve:applied:step11": "prisma migrate resolve --applied 20251016120000_step11_tags && prisma migrate deploy"
+    "db:resolve:applied:step11": "prisma migrate resolve --applied 20251016120000_step11_tags && prisma migrate deploy",
+    "prepare": "prisma generate"
   },
   "packageManager": "pnpm@10.18.2",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.721.0",
-    "@aws-sdk/s3-request-presigner": "^3.721.0",
+    "@aws-sdk/client-s3": "^3.673.0",
+    "@aws-sdk/s3-request-presigner": "^3.673.0",
     "@prisma/client": "^6.17.0",
     "jose": "^6.1.0",
     "next": "15.5.4",
@@ -41,8 +44,8 @@
     "eslint-config-next": "^15",
     "prisma": "^6.17.0",
     "tailwindcss": "^4",
+    "tsx": "^4.19.2",
     "typescript": "^5",
-    "typescript-eslint": "^8.46.1",
-    "tsx": "^4.19.2"
+    "typescript-eslint": "^8.46.1"
   }
 }

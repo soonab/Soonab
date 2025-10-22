@@ -88,7 +88,9 @@ model Post {
   visibility Visibility   @default(PUBLIC)
   profileId  String?
   state      ContentState @default(ACTIVE)
+  spaceId    String?
   profile    Profile?     @relation(fields: [profileId], references: [id])
+  space      Space?       @relation(fields: [spaceId], references: [id])
   replies    Reply[]
   tags       PostTag[]
   media      PostMedia[]
@@ -97,6 +99,7 @@ model Post {
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_post_created_id_desc")
+  @@index([spaceId, createdAt, id])
 }
 
 model Reply {
@@ -396,6 +399,60 @@ model OrgVerification {
   method     OrgVerifyMethod @default(EMAIL_DOMAIN)
   createdAt  DateTime        @default(now())
   verifiedAt DateTime?
+}
+
+model Space {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  createdBy   Profile  @relation(fields: [createdById], references: [id])
+  members     SpaceMembership[]
+  posts       Post[]
+
+  @@index([createdAt])
+}
+
+model SpaceMembership {
+  id        String   @id @default(cuid())
+  spaceId   String
+  profileId String
+  role      String   // 'member' | 'moderator' | 'owner'
+  createdAt DateTime @default(now())
+
+  space     Space    @relation(fields: [spaceId], references: [id])
+  profile   Profile  @relation(fields: [profileId], references: [id])
+
+  @@unique([spaceId, profileId])
+  @@index([profileId])
+}
+
+model Collection {
+  id         String     @id @default(cuid())
+  slug       String     @unique
+  title      String
+  ownerId    String
+  visibility Visibility @default(PUBLIC)
+  createdAt  DateTime   @default(now())
+
+  owner      Profile    @relation(fields: [ownerId], references: [id])
+  entries    CollectionEntry[]
+}
+
+model CollectionEntry {
+  id           String   @id @default(cuid())
+  collectionId String
+  postId       String
+  addedAt      DateTime @default(now())
+
+  collection   Collection @relation(fields: [collectionId], references: [id])
+  post         Post       @relation(fields: [postId], references: [id])
+
+  @@unique([collectionId, postId])
+  @@index([addedAt])
 }
 
 enum OrgVerifyStatus {

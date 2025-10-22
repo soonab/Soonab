@@ -98,6 +98,7 @@ model Post {
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
+  @@unique([createdAt, id], map: "uq_post_created_id")
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_post_created_id_desc")
   @@index([spaceId, createdAt, id])
 }

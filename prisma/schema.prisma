@@ -31,12 +31,16 @@ model Profile {
   handle               String             @unique
   displayName          String?
   bio                  String?
+  bioVisibility        Visibility         @default(PUBLIC)
+  location             String?
+  locationVisibility   Visibility         @default(PUBLIC)
   isDeleted            Boolean            @default(false)
   createdAt            DateTime           @default(now())
   followingConnections Follow[]           @relation("follows_follower")
   followerConnections  Follow[]           @relation("follows_following")
   posts                Post[]
   media                Media[]
+  links                ProfileLink[]
   user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   penalties            ProfilePenalty[]
   replies              Reply[]
@@ -45,6 +49,7 @@ model Profile {
   score                ReputationScore?
   trustReceived        Trust[]            @relation("trusts_trustee")
   trustGiven           Trust[]            @relation("trusts_truster")
+  orgVerifications     OrgVerification[]
   conversationsAsA     Conversation[]     @relation("ConversationMemberA")
   conversationsAsB     Conversation[]     @relation("ConversationMemberB")
   conversationsCreated Conversation[]     @relation("ConversationCreatedBy")
@@ -363,6 +368,45 @@ model OAuthState {
   expiresAt    DateTime
 
   @@index([expiresAt])
+}
+
+/// === Step 14: Profile fields & verification ===
+
+model ProfileLink {
+  id         String     @id @default(cuid())
+  profileId  String
+  profile    Profile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title      String
+  url        String
+  order      Int        @default(0)
+  visibility Visibility @default(PUBLIC)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([profileId, order])
+}
+
+model OrgVerification {
+  id         String          @id @default(cuid())
+  profileId  String
+  profile    Profile         @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  orgName    String
+  domain     String
+  status     OrgVerifyStatus @default(PENDING)
+  method     OrgVerifyMethod @default(EMAIL_DOMAIN)
+  createdAt  DateTime        @default(now())
+  verifiedAt DateTime?
+}
+
+enum OrgVerifyStatus {
+  PENDING
+  VERIFIED
+  REVOKED
+}
+
+enum OrgVerifyMethod {
+  EMAIL_DOMAIN
+  MANUAL
 }
 
 /// *

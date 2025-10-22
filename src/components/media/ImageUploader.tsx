@@ -1,184 +1,147 @@
-// src/components/media/ImageUploader.tsx
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/csrf-client';
 
-type UploadStatus = 'idle' | 'signing' | 'uploading' | 'finalizing' | 'done' | 'error';
+type UploadState = 'idle' | 'signing' | 'uploading' | 'finalizing' | 'done' | 'error';
 
 type UploadItem = {
   file: File;
-  localUrl?: string;
   mediaId?: string;
   key?: string;
-  status: UploadStatus;
+  localUrl?: string;         // local preview
+  status: UploadState;
   error?: string;
   urlThumb?: string;
   urlLarge?: string;
 };
 
-interface ImageUploaderProps {
+interface Props {
   scope: 'post' | 'dm';
   onChange(mediaIds: string[]): void;
 }
 
-export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
+export function ImageUploader({ scope, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
 
-  // UI shows one image for now; backend may allow more.
   const maxImages = 1;
   const maxMb = useMemo(
     () => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8),
     []
   );
 
-  // Emit selected (finished) media IDs to the composer
+  // Expose ready media IDs upward
   useEffect(() => {
-    onChange(items.filter((it) => it.status === 'done' && it.mediaId).map((it) => it.mediaId!));
+    onChange(items.filter(i => i.status === 'done' && i.mediaId).map(i => i.mediaId!));
   }, [items, onChange]);
+
+  // Auto-process one item at a time
+  useEffect(() => {
+    const busy = items.some(i => i.status === 'signing' || i.status === 'uploading' || i.status === 'finalizing');
+    if (busy) return;
+    const nextIx = items.findIndex(i => i.status === 'idle' || i.status === 'error');
+    if (nextIx !== -1) void uploadOne(nextIx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   const remaining = Math.max(0, maxImages - items.length);
 
   const pickOne = useCallback((files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files.item(0);
-    if (!file) return;
-
-    const localUrl = URL.createObjectURL(file);
-
-    // Add immediately with local preview
-    setItems((prev) => [...prev, { file, localUrl, status: 'idle' }]);
-
-    // Auto‑start upload for the just‑added file
-    const index = items.length; // position it will land in after setState
-    // Defer to next tick so state is applied
-    setTimeout(() => void uploadOne(index), 0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length]);
+    if (!files?.length) return;
+    const f = files.item(0);
+    if (!f) return;
+    const localUrl = URL.createObjectURL(f);
+    const newItem: UploadItem = { file: f, localUrl, status: 'idle' };
+    setItems(prev => [...prev, newItem]);        // auto-upload starts via useEffect
+  }, []);
 
   const handleSelect: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     pickOne(e.target.files);
-    // allow picking the same file again
     e.target.value = '';
   };
 
-  const removeAt = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Be lenient parsing JSON for edge cases
-  async function safeJson(res: Response) {
-    try {
-      return await res.json();
-    } catch {
-      try {
-        const t = await res.text();
-        return t ? { ok: false, error: t } : null;
-      } catch {
-        return null;
-      }
-    }
+  function removeAt(ix: number) {
+    setItems(prev => prev.filter((_, i) => i !== ix));
   }
 
-  const uploadOne = async (index: number) => {
-    const current = items[index];
-    if (!current) return;
+  async function safeJson(res: Response) {
+    try { return await res.json(); } catch { return null; }
+  }
 
-    // signing
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'signing', error: undefined } : it)));
+  async function uploadOne(index: number) {
+    const item = items[index];
+    if (!item) return;
 
+    // 1) SIGN
+    setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'signing', error: undefined } : it));
+    let sign;
     try {
-      // 1) SIGN to get pre‑signed PUT URL (CSRF protected)
       const signRes = await apiFetch('/api/media/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          filename: current.file.name,
-          contentType: current.file.type,
-          size: current.file.size,
-          scope, // 'post' | 'dm'
+          contentType: item.file.type,
+          size: item.file.size,
+          scope,
         }),
       });
-      const s = await safeJson(signRes);
-      if (!signRes.ok || !s?.ok || !s?.url) {
-        const msg = s?.error || `Sign failed (${signRes.status})`;
-        throw new Error(msg);
+      sign = await safeJson(signRes);
+      if (!signRes.ok || !sign?.ok || !sign?.url || !sign?.mediaId) {
+        throw new Error(sign?.error || `Sign failed (${signRes.status})`);
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sign failed';
+      setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'error', error: msg } : it));
+      return;
+    }
 
-      setItems((prev) =>
-        prev.map((it, i) => (i === index ? { ...it, status: 'uploading', key: s.key, mediaId: s.mediaId } : it))
-      );
+    // 2) PUT to S3
+    setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'uploading', key: sign.key, mediaId: sign.mediaId } : it));
+    const put = await fetch(sign.url, {
+      method: 'PUT',
+      headers: { 'Content-Type': item.file.type },
+      body: item.file,
+    });
+    if (!put.ok) {
+      const txt = await put.text().catch(() => '');
+      setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'error', error: txt || `Upload failed (${put.status})` } : it));
+      return;
+    }
 
-      // 2) PUT file directly to S3 (no CSRF needed)
-      const put = await fetch(s.url, {
-        method: 'PUT',
-        headers: { 'Content-Type': current.file.type },
-        body: current.file,
-      });
-      if (!put.ok) {
-        const txt = await put.text().catch(() => '');
-        throw new Error(txt || `Upload failed (${put.status})`);
-      }
-
-      setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'finalizing' } : it)));
-
-      // 3) FINALIZE (records metadata & returns public URLs)
+    // 3) FINALIZE
+    setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'finalizing' } : it));
+    try {
       const finRes = await apiFetch('/api/media/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mediaId: s.mediaId,
-          key: s.key,
-          contentType: current.file.type,
-          sizeBytes: current.file.size,
-          scope,
+          mediaId: sign.mediaId,
+          key: sign.key,
+          contentType: item.file.type,
+          sizeBytes: item.file.size,
         }),
       });
-      const done = await safeJson(finRes);
-      if (!finRes.ok || !done?.ok) {
-        const msg = done?.error || `Finalize failed (${finRes.status})`;
-        throw new Error(msg);
-      }
+      const fin = await safeJson(finRes);
+      if (!finRes.ok || !fin?.ok) throw new Error(fin?.error || `Finalize failed (${finRes.status})`);
 
-      setItems((prev) =>
-        prev.map((it, i) =>
-          i === index
-            ? {
-                ...it,
-                status: 'done',
-                urlThumb: done.urlThumb,
-                urlLarge: done.urlLarge,
-              }
-            : it
-        )
-      );
+      setItems(prev => prev.map((it, i) =>
+        i === index
+          ? { ...it, status: 'done', urlThumb: fin.urlThumb ?? it.localUrl, urlLarge: fin.urlLarge ?? it.localUrl }
+          : it
+      ));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Upload failed';
-      setItems((prev) => prev.map((it, i) => (i === index ? { ...it, status: 'error', error: message } : it)));
+      const msg = err instanceof Error ? err.message : 'Finalize failed';
+      setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'error', error: msg } : it));
     }
-  };
+  }
 
-  // Drag‑drop support (auto‑uploads too)
-  const handleDrop: React.DragEventHandler<HTMLDivElement> = (event) => {
-    event.preventDefault();
-    pickOne(event.dataTransfer.files);
-  };
-  const handleDragOver: React.DragEventHandler<HTMLDivElement> = (event) => {
-    event.preventDefault();
-  };
-
-  const hasPending = items.some((it) => it.status !== 'done' && it.status !== 'error');
+  const showRetry = items.some(i => i.status === 'error');
 
   return (
-    <div className="space-y-3" onDragOver={handleDragOver} onDrop={handleDrop}>
+    <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="btn"
-          onClick={() => inputRef.current?.click()}
-          disabled={remaining <= 0 || hasPending}
-        >
+        <button type="button" className="btn" onClick={() => inputRef.current?.click()} disabled={remaining <= 0}>
           Add image
         </button>
         <span className="text-xs text-gray-500">
@@ -186,36 +149,23 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
         </span>
       </div>
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        multiple={false}
-        hidden
-        onChange={handleSelect}
-      />
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={handleSelect} />
 
       {items.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-2">
-            {items.map((item, index) => (
-              <div key={`${index}-${item.mediaId ?? item.file.name}`} className="relative overflow-hidden rounded border bg-white">
-                {/** Preview: prefer finalized URL, else S3 object URL, else local blob */}
+            {items.map((it, index) => (
+              <div key={`${index}-${it.mediaId ?? it.file.name}`} className="relative overflow-hidden rounded border bg-white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={item.urlThumb || item.urlLarge || item.localUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-                {/* Tiny overlay for state/errors; kept subtle */}
-                {item.status !== 'done' && item.status !== 'error' && (
-                  <div className="absolute inset-x-0 bottom-0 bg-black/40 px-2 py-1 text-[11px] text-white">
+                <img src={it.urlThumb ?? it.localUrl} alt="" className="h-full w-full object-cover" />
+                {it.status !== 'done' && it.status !== 'error' && (
+                  <div className="absolute bottom-1 left-1 rounded bg-black/60 px-2 py-0.5 text-[11px] text-white">
                     Uploading…
                   </div>
                 )}
-                {item.status === 'error' && (
-                  <div className="absolute inset-x-0 bottom-0 bg-red-600/80 px-2 py-1 text-[11px] text-white">
-                    {item.error ?? 'Upload failed'}
+                {it.status === 'error' && (
+                  <div className="absolute bottom-1 left-1 rounded bg-red-600/90 px-2 py-0.5 text-[11px] text-white">
+                    {it.error || 'Upload failed'}
                   </div>
                 )}
                 <button
@@ -229,18 +179,18 @@ export function ImageUploader({ scope, onChange }: ImageUploaderProps) {
             ))}
           </div>
 
-          {/* The original composer shows an "Upload" button — keep it, but it's not required now */}
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              className="btn"
-              onClick={() => uploadOne(0)}
-              disabled={hasPending || items.length === 0}
-            >
-              Upload
-            </button>
-            <span className="text-xs text-gray-500">Only JPEG, PNG, or WebP up to {maxMb} MB.</span>
-          </div>
+          {showRetry && (
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setItems(prev => prev.map(i => (i.status === 'error' ? { ...i, status: 'idle' } : i)))}
+              >
+                Retry failed
+              </button>
+              <span className="text-xs text-gray-500">Only JPEG, PNG, or WebP up to {maxMb} MB.</span>
+            </div>
+          )}
         </>
       )}
     </div>

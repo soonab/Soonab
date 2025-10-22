@@ -1,5 +1,6 @@
 // src/components/SidebarLeft.tsx
 import Link from 'next/link'
+import MyCommunitiesPanel from './MyCommunitiesPanel'
 
 export default function SidebarLeft() {
   return (
@@ -20,6 +21,7 @@ export default function SidebarLeft() {
           <li>⌘K — Command menu</li>
         </ul>
       </div>
+      <MyCommunitiesPanel />
     </div>
   )
 }

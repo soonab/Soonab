@@ -51,7 +51,11 @@ export function requireCsrf(req: NextRequest): NextResponse | undefined {
  */
 export async function requireJson<T = unknown>(
   req: NextRequest,
-  schema?: { safeParse?: (data: unknown) => { success: boolean; data: T; error: unknown } }
+  schema?: {
+    safeParse?: (
+      data: unknown
+    ) => { success: true; data: T } | { success: false; error: unknown }
+  }
 ): Promise<T> {
   const ct = (req.headers.get('content-type') || '').toLowerCase();
   if (!ct.includes('application/json')) {

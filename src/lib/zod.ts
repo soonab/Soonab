@@ -13,6 +13,7 @@ interface BaseSchema<T> {
 
 class ZString implements BaseSchema<string> {
   private checks: ((value: string) => string | null)[] = [];
+  private shouldTrim = false;
 
   min(length: number) {
     this.checks.push((value) =>
@@ -28,6 +29,16 @@ class ZString implements BaseSchema<string> {
     return this;
   }
 
+  trim() {
+    this.shouldTrim = true;
+    return this;
+  }
+
+  refine(check: (value: string) => boolean, message = 'Invalid value') {
+    this.checks.push((value) => (check(value) ? null : message));
+    return this;
+  }
+
   regex(pattern: RegExp) {
     this.checks.push((value) => (pattern.test(value) ? null : 'Invalid format'));
     return this;
@@ -37,13 +48,14 @@ class ZString implements BaseSchema<string> {
     if (typeof input !== 'string') {
       throw new Error('Expected string');
     }
+    const value = this.shouldTrim ? input.trim() : input;
     for (const check of this.checks) {
-      const message = check(input);
+      const message = check(value);
       if (message) {
         throw new Error(message);
       }
     }
-    return input;
+    return value;
   }
 
   safeParse(input: unknown): SafeParseResult<string> {
@@ -56,6 +68,10 @@ class ZString implements BaseSchema<string> {
 
   optional() {
     return new ZOptional(this);
+  }
+
+  nullable() {
+    return new ZNullable(this);
   }
 }
 
@@ -88,6 +104,10 @@ class ZObject<S extends Shape> implements BaseSchema<InferShape<S>> {
 
   optional() {
     return new ZOptional(this);
+  }
+
+  nullable() {
+    return new ZNullable(this);
   }
 }
 
@@ -136,6 +156,10 @@ class ZNumber implements BaseSchema<number> {
   optional() {
     return new ZOptional(this);
   }
+
+  nullable() {
+    return new ZNullable(this);
+  }
 }
 
 class ZArray<T> implements BaseSchema<T[]> {
@@ -169,6 +193,10 @@ class ZArray<T> implements BaseSchema<T[]> {
   optional() {
     return new ZOptional(this);
   }
+
+  nullable() {
+    return new ZNullable(this);
+  }
 }
 
 class ZEnum<T extends string> implements BaseSchema<T> {
@@ -192,13 +220,17 @@ class ZEnum<T extends string> implements BaseSchema<T> {
   optional() {
     return new ZOptional(this);
   }
+
+  nullable() {
+    return new ZNullable(this);
+  }
 }
 
 class ZOptional<T> implements BaseSchema<T | undefined> {
   constructor(private readonly inner: BaseSchema<T>) {}
 
   parse(input: unknown): T | undefined {
-    if (input === undefined || input === null) return undefined;
+    if (input === undefined) return undefined;
     return this.inner.parse(input);
   }
 
@@ -208,6 +240,35 @@ class ZOptional<T> implements BaseSchema<T | undefined> {
     } catch (err) {
       return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
     }
+  }
+
+  nullable() {
+    return new ZNullable(this);
+  }
+}
+
+class ZNullable<T> implements BaseSchema<T | null> {
+  constructor(private readonly inner: BaseSchema<T>) {}
+
+  parse(input: unknown): T | null {
+    if (input === null) return null;
+    return this.inner.parse(input);
+  }
+
+  safeParse(input: unknown): SafeParseResult<T | null> {
+    try {
+      return { success: true, data: this.parse(input) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  }
+
+  optional() {
+    return new ZOptional(this);
+  }
+
+  nullable() {
+    return this;
   }
 }
 

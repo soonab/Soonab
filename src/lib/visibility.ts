@@ -14,8 +14,8 @@ export async function canSeeField(
 
   if (required === 'FOLLOWERS') {
     const follow = await prisma.follow.findFirst({
-      where: { followerProfileId: viewerPid, followeeProfileId: ownerPid },
-      select: { id: true },
+      where: { followerProfileId: viewerPid, followingProfileId: ownerPid },
+      select: { followerProfileId: true },
     })
     return !!follow
   }
@@ -23,7 +23,7 @@ export async function canSeeField(
   if (required === 'TRUSTED') {
     const trust = await prisma.trust.findFirst({
       where: { trusterProfileId: ownerPid, trusteeProfileId: viewerPid },
-      select: { id: true },
+      select: { trusterProfileId: true },
     })
     return !!trust
   }

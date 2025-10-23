@@ -457,29 +457,38 @@ model SpaceMembership {
   @@index([profileId])
 }
 
-model Collection {
-  id         String     @id @default(cuid())
-  slug       String     @unique
-  title      String
-  ownerId    String
-  visibility Visibility @default(PUBLIC)
-  createdAt  DateTime   @default(now())
+/// --- Collections (Step-16) ---
+/// Visibility is per-collection (PUBLIC | PRIVATE).
+/// Entries are unique per (collectionId, postId) and ordered by addedAt DESC.
 
-  owner   Profile           @relation("ProfileOwnedCollections", fields: [ownerId], references: [id])
-  entries CollectionEntry[]
+enum CollectionVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+model Collection {
+  id         String               @id @default(cuid())
+  slug       String               @unique @db.VarChar(64)
+  title      String               @db.VarChar(128)
+  ownerId    String
+  owner      Profile              @relation("ProfileOwnedCollections", fields: [ownerId], references: [id], onDelete: Cascade)
+  visibility CollectionVisibility @default(PUBLIC)
+  createdAt  DateTime             @default(now())
+  entries    CollectionEntry[]
+
+  @@index([ownerId, createdAt])
 }
 
 model CollectionEntry {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   postId       String
-  addedAt      DateTime @default(now())
-
-  collection Collection @relation(fields: [collectionId], references: [id])
-  post       Post       @relation(fields: [postId], references: [id])
+  post         Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  addedAt      DateTime   @default(now())
 
   @@unique([collectionId, postId])
-  @@index([addedAt])
+  @@index([collectionId, addedAt(sort: Desc)])
 }
 
 enum OrgVerifyStatus {

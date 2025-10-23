@@ -1,6 +1,8 @@
 // src/lib/s3.ts
 import { S3Client } from '@aws-sdk/client-s3';
 
+export { DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+
 let _client: S3Client | null = null;
 
 function need(one: string, alt?: string) {

@@ -1,3 +1,4 @@
+// src/components/media/ImageUploader.tsx
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -9,7 +10,7 @@ type UploadItem = {
   file: File;
   mediaId?: string;
   key?: string;
-  localUrl?: string;         // local preview
+  localUrl?: string;   // local preview (blob:)
   status: UploadState;
   error?: string;
   urlThumb?: string;
@@ -25,22 +26,39 @@ export function ImageUploader({ scope, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
 
+  // Current UI constraint: single image per post (adjust if needed)
   const maxImages = 1;
+
   const maxMb = useMemo(
     () => Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_MB ?? process.env.UPLOAD_MAX_MB ?? 8),
     []
   );
+  const BYTES_PER_MB = 1024 * 1024;
 
-  // Expose ready media IDs upward
+  // Notify parent only when the list of done IDs changes (prevents loops)
+  const doneIds = useMemo(
+    () => items.filter(i => i.status === 'done' && i.mediaId).map(i => i.mediaId!) as string[],
+    [items]
+  );
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => { onChangeRef.current(doneIds); }, [doneIds]);
+
+  // Revoke blob URLs on unmount
   useEffect(() => {
-    onChange(items.filter(i => i.status === 'done' && i.mediaId).map(i => i.mediaId!));
-  }, [items, onChange]);
+    return () => {
+      items.forEach(i => {
+        if (i.localUrl?.startsWith('blob:')) URL.revokeObjectURL(i.localUrl);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Auto-process one item at a time
+  // Auto-process one idle item at a time (no auto-retry on errors)
   useEffect(() => {
     const busy = items.some(i => i.status === 'signing' || i.status === 'uploading' || i.status === 'finalizing');
     if (busy) return;
-    const nextIx = items.findIndex(i => i.status === 'idle' || i.status === 'error');
+    const nextIx = items.findIndex(i => i.status === 'idle');
     if (nextIx !== -1) void uploadOne(nextIx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
@@ -51,18 +69,37 @@ export function ImageUploader({ scope, onChange }: Props) {
     if (!files?.length) return;
     const f = files.item(0);
     if (!f) return;
+
+    if (f.size > maxMb * BYTES_PER_MB) {
+      const localUrl = URL.createObjectURL(f);
+      setItems(prev => [
+        ...prev,
+        {
+          file: f,
+          localUrl,
+          status: 'error',
+          error: `File is ${(f.size / BYTES_PER_MB).toFixed(1)}MB; limit is ${maxMb}MB.`,
+        },
+      ]);
+      return;
+    }
+
     const localUrl = URL.createObjectURL(f);
-    const newItem: UploadItem = { file: f, localUrl, status: 'idle' };
-    setItems(prev => [...prev, newItem]);        // auto-upload starts via useEffect
-  }, []);
+    setItems(prev => [...prev, { file: f, localUrl, status: 'idle' }]);
+  }, [maxMb]);
 
   const handleSelect: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     pickOne(e.target.files);
+    // allow re-selecting the same file
     e.target.value = '';
   };
 
   function removeAt(ix: number) {
-    setItems(prev => prev.filter((_, i) => i !== ix));
+    setItems(prev => {
+      const toRemove = prev[ix];
+      if (toRemove?.localUrl?.startsWith('blob:')) URL.revokeObjectURL(toRemove.localUrl);
+      return prev.filter((_, i) => i !== ix);
+    });
   }
 
   async function safeJson(res: Response) {
@@ -75,7 +112,8 @@ export function ImageUploader({ scope, onChange }: Props) {
 
     // 1) SIGN
     setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'signing', error: undefined } : it));
-    let sign;
+    let sign: { url: string; mediaId: string; key: string } | null = null;
+
     try {
       const signRes = await apiFetch('/api/media/sign', {
         method: 'POST',
@@ -84,20 +122,32 @@ export function ImageUploader({ scope, onChange }: Props) {
           contentType: item.file.type,
           size: item.file.size,
           scope,
+          name: item.file.name, // helps server infer ext
         }),
       });
-      sign = await safeJson(signRes);
-      if (!signRes.ok || !sign?.ok || !sign?.url || !sign?.mediaId) {
-        throw new Error(sign?.error || `Sign failed (${signRes.status})`);
-      }
+
+      const raw = await safeJson(signRes);
+      const url = raw?.url ?? raw?.uploadUrl;
+      const mediaId = raw?.mediaId ?? raw?.id;
+      const key = raw?.key ?? raw?.objectKey;
+      const ok = Boolean(signRes.ok && (raw?.ok ?? true) && url && mediaId && key);
+
+      if (!ok) throw new Error(raw?.error || `Sign failed (${signRes.status})`);
+      sign = { url, mediaId, key };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sign failed';
       setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'error', error: msg } : it));
       return;
     }
 
-    // 2) PUT to S3
-    setItems(prev => prev.map((it, i) => i === index ? { ...it, status: 'uploading', key: sign.key, mediaId: sign.mediaId } : it));
+    // 2) PUT to S3  (← fixed the typo: ...tus → status)
+    setItems(prev => prev.map((it, i) => i === index ? {
+      ...it,
+      status: 'uploading',
+      key: sign!.key,
+      mediaId: sign!.mediaId,
+    } : it));
+
     const put = await fetch(sign.url, {
       method: 'PUT',
       headers: { 'Content-Type': item.file.type },
@@ -125,9 +175,15 @@ export function ImageUploader({ scope, onChange }: Props) {
       const fin = await safeJson(finRes);
       if (!finRes.ok || !fin?.ok) throw new Error(fin?.error || `Finalize failed (${finRes.status})`);
 
+      // Until thumbnailing exists, fall back to ORIGINAL url (server returns same for both)
       setItems(prev => prev.map((it, i) =>
         i === index
-          ? { ...it, status: 'done', urlThumb: fin.urlThumb ?? it.localUrl, urlLarge: fin.urlLarge ?? it.localUrl }
+          ? {
+              ...it,
+              status: 'done',
+              urlThumb: fin.urlThumb ?? it.localUrl,
+              urlLarge: fin.urlLarge ?? it.localUrl,
+            }
           : it
       ));
     } catch (err) {
@@ -141,7 +197,13 @@ export function ImageUploader({ scope, onChange }: Props) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <button type="button" className="btn" onClick={() => inputRef.current?.click()} disabled={remaining <= 0}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => inputRef.current?.click()}
+          disabled={remaining <= 0}
+          aria-disabled={remaining <= 0}
+        >
           Add image
         </button>
         <span className="text-xs text-gray-500">
@@ -149,7 +211,13 @@ export function ImageUploader({ scope, onChange }: Props) {
         </span>
       </div>
 
-      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={handleSelect} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        hidden
+        onChange={handleSelect}
+      />
 
       {items.length > 0 && (
         <>
@@ -172,6 +240,7 @@ export function ImageUploader({ scope, onChange }: Props) {
                   type="button"
                   className="absolute right-1 top-1 rounded bg-black/70 px-2 py-0.5 text-[11px] text-white"
                   onClick={() => removeAt(index)}
+                  aria-label="Remove image"
                 >
                   Remove
                 </button>

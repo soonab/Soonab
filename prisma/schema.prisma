@@ -56,6 +56,11 @@ model Profile {
   messagesSent         Message[]
   dmBlocksInitiated    DMBlock[]          @relation("DMBlocker")
   dmBlocksReceived     DMBlock[]          @relation("DMBlocked")
+
+  // NEW back-relations for Spaces/Collections (fixes P1012)
+  createdSpaces    Space[]           @relation("ProfileCreatedSpaces")
+  spaceMemberships SpaceMembership[]
+  ownedCollections Collection[]      @relation("ProfileOwnedCollections")
 }
 
 /// *
@@ -89,17 +94,24 @@ model Post {
   profileId  String?
   state      ContentState @default(ACTIVE)
   spaceId    String?
-  profile    Profile?     @relation(fields: [profileId], references: [id])
-  space      Space?       @relation(fields: [spaceId], references: [id])
-  replies    Reply[]
-  tags       PostTag[]
-  media      PostMedia[]
 
+  profile Profile?    @relation(fields: [profileId], references: [id])
+  space   Space?      @relation(fields: [spaceId], references: [id])
+  replies Reply[]
+  tags    PostTag[]
+  media   PostMedia[]
+
+  // NEW back-relation for Collections (fixes P1012 on CollectionEntry.post)
+  collectionEntries CollectionEntry[]
+
+  // Deterministic chrono cursor: composite unique alias used as `createdAt_id`
+  @@unique([createdAt, id], name: "createdAt_id", map: "uq_post_created_id")
+  // Indices for chronological + filters
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
-  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "idx_post_created_id_desc")
-  @@index([spaceId, createdAt, id])
+  // Space feed filter + order
+  @@index([spaceId, createdAt, id], map: "idx_post_space_created_id")
 }
 
 model Reply {
@@ -111,13 +123,26 @@ model Reply {
   visibility Visibility   @default(PUBLIC)
   profileId  String?
   state      ContentState @default(ACTIVE)
-  post       Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
-  profile    Profile?     @relation(fields: [profileId], references: [id])
-  tags       ReplyTag[]
+
+  post    Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  profile Profile?     @relation(fields: [profileId], references: [id])
+  tags    ReplyTag[]
+  media   ReplyMedia[] // NEW: images attached to this reply
 
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
   @@index([postId, createdAt, id], map: "idx_reply_post_created_id_asc")
+}
+
+// NEW join table to link replies ↔ media
+model ReplyMedia {
+  replyId String
+  mediaId String
+
+  reply Reply @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([replyId, mediaId])
 }
 
 model Tag {
@@ -401,6 +426,8 @@ model OrgVerification {
   verifiedAt DateTime?
 }
 
+// === Spaces & Collections ===
+
 model Space {
   id          String   @id @default(cuid())
   slug        String   @unique
@@ -409,9 +436,9 @@ model Space {
   createdById String
   createdAt   DateTime @default(now())
 
-  createdBy   Profile  @relation(fields: [createdById], references: [id])
-  members     SpaceMembership[]
-  posts       Post[]
+  createdBy Profile           @relation("ProfileCreatedSpaces", fields: [createdById], references: [id])
+  members   SpaceMembership[]
+  posts     Post[]
 
   @@index([createdAt])
 }
@@ -420,13 +447,13 @@ model SpaceMembership {
   id        String   @id @default(cuid())
   spaceId   String
   profileId String
-  role      String   // 'member' | 'moderator' | 'owner'
+  role      String // 'member' | 'moderator' | 'owner'
   createdAt DateTime @default(now())
 
-  space     Space    @relation(fields: [spaceId], references: [id])
-  profile   Profile  @relation(fields: [profileId], references: [id])
+  space   Space   @relation(fields: [spaceId], references: [id])
+  profile Profile @relation(fields: [profileId], references: [id])
 
-  @@unique([spaceId, profileId])
+  @@unique([spaceId, profileId], name: "spaceId_profileId")
   @@index([profileId])
 }
 
@@ -438,8 +465,8 @@ model Collection {
   visibility Visibility @default(PUBLIC)
   createdAt  DateTime   @default(now())
 
-  owner      Profile    @relation(fields: [ownerId], references: [id])
-  entries    CollectionEntry[]
+  owner   Profile           @relation("ProfileOwnedCollections", fields: [ownerId], references: [id])
+  entries CollectionEntry[]
 }
 
 model CollectionEntry {
@@ -448,8 +475,8 @@ model CollectionEntry {
   postId       String
   addedAt      DateTime @default(now())
 
-  collection   Collection @relation(fields: [collectionId], references: [id])
-  post         Post       @relation(fields: [postId], references: [id])
+  collection Collection @relation(fields: [collectionId], references: [id])
+  post       Post       @relation(fields: [postId], references: [id])
 
   @@unique([collectionId, postId])
   @@index([addedAt])
@@ -517,6 +544,7 @@ model Media {
   variants       MediaVariant[]
   posts          PostMedia[]
   messages       DMMessageMedia[]
+  replies        ReplyMedia[] // NEW back-relation (optional to use)
   createdAt      DateTime         @default(now())
   deletedAt      DateTime?
   ownerProfile   Profile          @relation(fields: [ownerProfileId], references: [id])

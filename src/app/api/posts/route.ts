@@ -1,64 +1,43 @@
-// src/app/api/posts/route.ts
-export const runtime = 'nodejs';
-
+// src/app/api/posts/[id]/replies/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'crypto';
 import { Visibility } from '@prisma/client';
-import { canCreatePost } from '@/lib/limits';
+import { canReply } from '@/lib/limits';
 import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
-import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
+import { assertSameOrigin, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
-import { serializeAttachments, type VariantRecord } from '@/lib/media';
 
-const POST_MAX = 500;
+// Keep your existing limit for typed text
+const REPLY_MAX = 500;
 
-/** GET /api/posts — PUBLIC+ACTIVE, newest-first, cursor paginated. */
-export async function GET(req: NextRequest) {
-  const limit = Math.max(1, Math.min(Number(req.nextUrl.searchParams.get('limit')) || 50, 100));
+// GET: list PUBLIC ACTIVE replies asc (cursor)
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id: postId } = await ctx.params;
+  const limit = Math.max(1, Math.min(Number(req.nextUrl.searchParams.get('limit')) || 20, 100));
   const cur = decodeCursor(req.nextUrl.searchParams.get('cursor'));
-  const where = { visibility: 'PUBLIC' as const, state: 'ACTIVE' as const };
 
-  const items = await prisma.post.findMany({
+  const base = { postId, state: 'ACTIVE' as const, visibility: 'PUBLIC' as const };
+
+  const items = await prisma.reply.findMany({
     where: cur
       ? {
-          ...where,
+          ...base,
           OR: [
-            { createdAt: { lt: new Date(cur.createdAt) } },
-            { AND: [{ createdAt: new Date(cur.createdAt) }, { id: { lt: cur.id } }] },
+            { createdAt: { gt: new Date(cur.createdAt) } },
+            { AND: [{ createdAt: new Date(cur.createdAt) }, { id: { gt: cur.id } }] },
           ],
         }
-      : where,
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      : base,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: limit,
-    include: {
-      media: {
-        include: {
-          media: { include: { variants: true } },
-        },
-      },
-    },
-  });
-
-  const normalized = (items as any[]).map((item) => {
-    const attachments = serializeAttachments(
-      (item.media ?? []).map((link: any) => ({
-        id: link.mediaId,
-        variants: link.media.variants.map((v: any) => ({
-          role: v.role,
-          key: v.key,
-          width: v.width,
-          height: v.height,
-          contentType: v.contentType,
-        })),
-      })),
-    );
-    const { media: _join, ...rest } = item;
-    return { ...rest, media: attachments };
   });
 
   const nextCursor =
@@ -69,90 +48,67 @@ export async function GET(req: NextRequest) {
         })
       : null;
 
-  // Back-compat: keep `posts` while adding `items` + `nextCursor`
-  return NextResponse.json({ ok: true, items: normalized, posts: normalized, nextCursor });
+  return NextResponse.json({ ok: true, items, nextCursor });
 }
 
-/** POST /api/posts — create */
-export async function POST(req: NextRequest) {
-  // 🛡️ ALWAYS enforce: same-origin + CSRF
-  // - If the request has an Origin (browser), host must match.
-  // - If the request has no Origin (Node/cURL), a valid CSRF header+cookie must be present.
-  {
-    const so = assertSameOrigin(req);
-    if (so) return so;
-    const cs = requireCsrf(req);
-    if (cs) return cs;
-  }
-
+// POST: create reply (PUBLIC) + optional image attachments via mediaIds
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  assertSameOrigin(req);
   const payload = await requireJson<any>(req);
 
-  const body = String(payload?.body ?? '').trim();
-  if (!body) return NextResponse.json({ ok: false, error: 'Body is required' }, { status: 400 });
-  if (body.length > POST_MAX) {
-    return NextResponse.json({ ok: false, error: `Too long (max ${POST_MAX})` }, { status: 400 });
+  const { id: postId } = await ctx.params;
+
+  const parent = await prisma.post.findUnique({
+    where: { id: postId },
+    select: { id: true, state: true },
+  });
+  if (!parent) return NextResponse.json({ ok: false, error: 'Post not found' }, { status: 404 });
+  if (parent.state !== 'ACTIVE') {
+    return NextResponse.json({ ok: false, error: 'Cannot reply to a non-active post' }, { status: 400 });
   }
 
-  const maxImages = Number(process.env.UPLOAD_MAX_IMAGES_PER_ITEM ?? 4);
-  const mediaIds = Array.isArray(payload?.mediaIds)
-    ? payload.mediaIds.map((x: unknown) => String(x)).filter(Boolean)
-    : [];
-  if (mediaIds.length > maxImages) {
-    return NextResponse.json(
-      { ok: false, error: `Too many images (max ${maxImages})` },
-      { status: 400 }
-    );
+  const rawBody = String(payload?.body ?? '');
+  const body = rawBody.trim();
+
+  // Allow empty text if images present, otherwise enforce text
+  const mediaIds: string[] = Array.isArray(payload?.mediaIds) ? payload.mediaIds.filter(Boolean) : [];
+  if (!body && mediaIds.length === 0) {
+    return NextResponse.json({ ok: false, error: 'Body or media required' }, { status: 400 });
+  }
+  if (body && body.length > REPLY_MAX) {
+    return NextResponse.json({ ok: false, error: `Too long (max ${REPLY_MAX})` }, { status: 400 });
   }
 
-  // Session cookie (sid) for anonymous posting quotas
   const jar = await cookies();
   let sid = jar.get('sid')?.value as string | undefined;
   let setCookie = false;
   if (!sid) { sid = randomUUID(); setCookie = true; }
 
   await ensureSessionProfile(sid);
-
   const profileId = await getCurrentProfileId(); // string | null
 
-  if (mediaIds.length && !profileId) {
-    return NextResponse.json({ ok: false, error: 'Sign in required for media' }, { status: 403 });
-  }
-
-  // Quota: 1 (post) + mediaIds.length (images)
-  const gate = await canCreatePost(sid, profileId ?? undefined, mediaIds.length);
+  const gate = await canReply(sid, profileId ?? undefined, postId);
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
 
   if (profileId && (await hasActivePostingPenalty(profileId))) {
     return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
   }
 
-  const vRaw = String(payload?.visibility || 'PUBLIC').toUpperCase();
-  const visibility: Visibility =
-    (['PUBLIC', 'FOLLOWERS', 'TRUSTED'] as const).includes(vRaw as any) ? (vRaw as Visibility) : 'PUBLIC';
-
-  const hashtags = extractTags(body);
-
-  let mediaRecords: VariantRecord[] = [];
-  if (mediaIds.length) {
-    mediaRecords = await prisma.media.findMany({
-      where: { id: { in: mediaIds }, ownerProfileId: profileId!, status: 'READY' },
-      include: { variants: true },
-    });
-    if (mediaRecords.length !== mediaIds.length) {
-      return NextResponse.json({ ok: false, error: 'Invalid media selection' }, { status: 400 });
-    }
-  }
+  const hashtags = body ? extractTags(body) : [];
 
   const created = await prisma.$transaction(async (tx) => {
-    const post = await tx.post.create({
-      data: { sessionId: sid, profileId: profileId ?? null, body, visibility },
+    const reply = await tx.reply.create({
+      data: {
+        postId,
+        sessionId: sid,
+        profileId: profileId ?? null,
+        body,
+        visibility: Visibility.PUBLIC,
+      },
     });
-
-    if (mediaIds.length) {
-      await tx.postMedia.createMany({
-        data: mediaIds.map((mid: string) => ({ postId: post.id, mediaId: mid })),
-      });
-    }
 
     if (hashtags.length) {
       const tagRecords = await Promise.all(
@@ -166,25 +122,24 @@ export async function POST(req: NextRequest) {
       );
 
       if (tagRecords.length) {
-        await tx.postTag.createMany({
-          data: tagRecords.map((tag) => ({ postId: post.id, tagId: tag.id })),
+        await tx.replyTag.createMany({
+          data: tagRecords.map((tag) => ({ replyId: reply.id, tagId: tag.id })),
           skipDuplicates: true,
         });
       }
     }
 
-    return post;
+    if (mediaIds.length) {
+      await tx.replyMedia.createMany({
+        data: mediaIds.map((mid) => ({ replyId: reply.id, mediaId: mid })),
+        skipDuplicates: true,
+      });
+    }
+
+    return reply;
   });
 
-  const attachments = serializeAttachments(mediaRecords, mediaIds);
-
-  const res = NextResponse.json({
-    ok: true,
-    post: { ...created, media: attachments },
-    hashtags,
-    quota: gate.quota ?? null,
-  });
-
+  const res = NextResponse.json({ ok: true, reply: created, quota: gate.quota ?? null });
   if (setCookie) {
     res.cookies.set('sid', sid, {
       httpOnly: true,

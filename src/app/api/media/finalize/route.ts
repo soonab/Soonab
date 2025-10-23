@@ -1,77 +1,61 @@
+// src/app/api/media/finalize/route.ts
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
-import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
+import { prisma } from '@/lib/db';
+import { assertSameOrigin } from '@/lib/security';
 import { getCurrentProfileId } from '@/lib/auth';
-import { prisma as db } from '@/lib/db';
-import { z } from '@/lib/zod';
-import { $Enums } from '@prisma/client';
+import { publicUrlForKey } from '@/lib/s3';
 
-const Body = z.object({
-  mediaId: z.string().min(1),
-  key: z.string().min(3),                    // S3 object key (we don't store this on Media)
-  contentType: z.string().min(3).optional(),
-  sizeBytes: z.number().int().min(0).optional(),
-});
-
-function extFromKey(key: string): string {
-  const match = key.toLowerCase().match(/\.(jpe?g|png|webp)$/);
-  const e = match?.[1];
-  // Normalize "jpg" to "jpeg" to match common pipelines
-  return e === 'jpg' ? 'jpeg' : (e ?? 'bin');
-}
-
-function publicUrl(key: string) {
-  const bucket =
-    process.env.AWS_S3_BUCKET || process.env.S3_BUCKET || process.env.BUCKET || '';
-  const region = process.env.AWS_REGION || 'us-east-1';
-  // Keep slashes in place; only escape unsafe chars
-  return `https://${bucket}.s3.${region}.amazonaws.com/${encodeURI(key)}`;
-}
-
+/**
+ * Finalize an upload:
+ *  - Upsert ORIGINAL variant for the given S3 key
+ *  - Mark media READY
+ * For now we do NOT generate THUMB/LARGE here; the UI falls back to ORIGINAL.
+ */
 export async function POST(req: NextRequest) {
-  const so = assertSameOrigin(req); if (so) return so;
-  const cs = requireCsrf(req);      if (cs) return cs;
+  try { assertSameOrigin(req); }
+  catch { return NextResponse.json({ ok: false, error: 'CSRF validation failed' }, { status: 403 }); }
 
-  const pid = await getCurrentProfileId();
-  if (!pid) {
-    return NextResponse.json({ ok: false, error: 'Sign in required' }, { status: 401 });
+  const profileId = await getCurrentProfileId();
+  if (!profileId) return NextResponse.json({ ok: false, error: 'Sign in required' }, { status: 401 });
+
+  let body: any;
+  try { body = await req.json(); }
+  catch { return NextResponse.json({ ok: false, error: 'Invalid JSON' }, { status: 400 }); }
+
+  const { mediaId, key, contentType, sizeBytes } = body ?? {};
+  if (!mediaId || !key) {
+    return NextResponse.json({ ok: false, error: 'Missing mediaId/key' }, { status: 400 });
   }
 
-  const { mediaId, key, contentType, sizeBytes } = await requireJson(req, Body);
-
-  // Update the Media row that /api/media/sign created.
-  try {
-    await db.media.update({
-      where: { id: mediaId, ownerProfileId: pid },
-      data: {
-        status: $Enums.MediaStatus.READY,                 // <- your enum has READY
-        ...(contentType ? { contentType } : {}),
-        ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
-        ...(extFromKey(key) ? { ext: extFromKey(key) } : {}),
-      },
-      select: { id: true },
-    });
-  } catch {
-    // Fallback for older shapes: update only the status
-    try {
-      await db.media.update({
-        where: { id: mediaId, ownerProfileId: pid },
-        data: { status: $Enums.MediaStatus.READY },
-        select: { id: true },
-      });
-    } catch {
-      return NextResponse.json(
-        { ok: false, error: 'Media not found or not owned by you' },
-        { status: 400 }
-      );
-    }
+  const media = await prisma.media.findUnique({ where: { id: mediaId } });
+  if (!media || media.ownerProfileId !== profileId) {
+    return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 });
   }
 
-  // We don’t transform in dev; use the same URL for thumb & large.
-  const url = publicUrl(key);
-  return NextResponse.json({
-    ok: true,
-    mediaId,
-    urlThumb: url,
-    urlLarge: url,
+  // Upsert ORIGINAL variant by unique key (width/height unknown at this stage)
+  await prisma.mediaVariant.upsert({
+    where: { key },
+    create: {
+      mediaId,
+      role: 'ORIGINAL',
+      key,
+      width: 0,
+      height: 0,
+      sizeBytes: typeof sizeBytes === 'number' ? Math.trunc(sizeBytes) : media.sizeBytes,
+      contentType: contentType || media.contentType,
+    },
+    update: {
+      sizeBytes: typeof sizeBytes === 'number' ? Math.trunc(sizeBytes) : undefined,
+      contentType: contentType || undefined,
+    },
   });
+
+  await prisma.media.update({ where: { id: mediaId }, data: { status: 'READY' } });
+
+  const url = publicUrlForKey(key);
+  // For now we return ORIGINAL for both; the UI will show ORIGINAL if LARGE is absent.
+  return NextResponse.json({ ok: true, urlLarge: url, urlThumb: url });
 }

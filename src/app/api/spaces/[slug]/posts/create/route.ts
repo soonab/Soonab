@@ -6,38 +6,58 @@ import { z } from '@/lib/zod';
 
 const Create = z.object({
   body: z.string().min(1).max(4000),
+  mediaIds: z.array(z.string()).max(Number(process.env.UPLOAD_MAX_IMAGES_PER_ITEM ?? 4)).optional(),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { slug: string } }) {
-  const so = assertSameOrigin(req);
-  if (so) return so;
-  const cs = requireCsrf(req);
-  if (cs) return cs;
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ slug: string }> }
+) {
+  try { assertSameOrigin(req); } catch { return NextResponse.json({ error: 'forbidden_origin' }, { status: 403 }); }
+  const csrf = requireCsrf(req); if (csrf) return csrf;
 
   const profileId = await getCurrentProfileId();
-  if (!profileId) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
+  if (!profileId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const space = await prisma.space.findUnique({ where: { slug: params.slug } });
-  if (!space) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  }
+  const { slug } = await context.params;
 
-  const member = await prisma.spaceMembership.findUnique({
-    where: { spaceId_profileId: { spaceId: space.id, profileId } },
+  const space = await prisma.space.findUnique({
+    where: { slug },
     select: { id: true },
   });
-  if (!member) {
-    return NextResponse.json({ error: 'forbidden_not_member' }, { status: 403 });
-  }
+  if (!space) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const { body } = await requireJson(req, Create);
+  // Must be a member to post
+  const member = await prisma.spaceMembership.findFirst({
+    where: { spaceId: space.id, profileId },
+    select: { id: true },
+  });
+  if (!member) return NextResponse.json({ error: 'forbidden_not_member' }, { status: 403 });
 
-  const post = await prisma.post.create({
-    data: { body, authorId: profileId, spaceId: space.id },
-    select: { id: true, createdAt: true },
+  const payload = await requireJson<any>(req);
+  const parsed = Create.safeParse(payload);
+  if (!parsed.success) return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
+
+  const { body, mediaIds = [] } = parsed.data;
+
+  const created = await prisma.$transaction(async (tx) => {
+    const post = await tx.post.create({
+      data: { body, profileId, spaceId: space.id, state: 'ACTIVE', visibility: 'PUBLIC' },
+      select: { id: true, createdAt: true },
+    });
+
+    if (mediaIds.length) {
+      await tx.postMedia.createMany({
+        data: mediaIds.map((mid) => ({ postId: post.id, mediaId: mid })),
+        skipDuplicates: true,
+      });
+    }
+
+    return post;
   });
 
-  return NextResponse.json({ ok: true, id: post.id, createdAt: post.createdAt });
+  // (Optional) revalidate the Space page if you render server-side
+  // try { revalidatePath(`/space/${slug}`); } catch {}
+
+  return NextResponse.json({ ok: true, id: created.id, createdAt: created.createdAt });
 }

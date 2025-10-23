@@ -25,7 +25,7 @@ export default async function SpacePage({ params }: { params: { slug: string } }
       }))
     : false;
 
-  // Server render first page via the API (keeps logic in one place)
+  // You can keep using the API for the first page, or query Prisma directly.
   const base = process.env.NEXT_PUBLIC_SITE_URL || '';
   const res = await fetch(`${base}/api/spaces/${space.slug}/posts?limit=20`, { cache: 'no-store' });
   const data = await res.json();
@@ -48,7 +48,7 @@ export default async function SpacePage({ params }: { params: { slug: string } }
           {data.posts?.map((p: any) => (
             <li key={p.id} className="rounded-md border p-4">
               <div className="text-sm text-zinc-500">{new Date(p.createdAt).toLocaleString()}</div>
-              <div className="font-medium">@{p.author?.handle}</div>
+              <div className="font-medium">@{p.profile?.handle}</div>
               <p className="whitespace-pre-wrap">{p.body}</p>
             </li>
           ))}

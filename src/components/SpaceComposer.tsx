@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { ImageUploader } from '@/components/media/ImageUploader';
 
 export default function SpaceComposer({ spaceSlug, onPosted }: { spaceSlug: string; onPosted?: () => void }) {
   const [text, setText] = useState('');
   const [pending, start] = useTransition();
+  const [mediaIds, setMediaIds] = useState<string[]>([]);
   const disabled = pending || !text.trim();
 
   function submit() {
@@ -13,23 +15,28 @@ export default function SpaceComposer({ spaceSlug, onPosted }: { spaceSlug: stri
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, mediaIds }),
       });
-      if (res.ok) {
-        setText('');
-        onPosted?.();
-      }
+      if (!res.ok) return;
+      setText('');
+      setMediaIds([]);
+      onPosted?.();
+      location.reload(); // keep Space feed strictly chronological
     });
   }
 
   return (
-    <div className="rounded-md border p-3 mb-4">
+    <div className="rounded-md border p-3 space-y-2">
       <textarea
-        className="w-full resize-y min-h-[90px] outline-none"
-        placeholder={`Share something with #${spaceSlug}…`}
+        className="w-full rounded border p-2"
         value={text}
         onChange={(e) => setText(e.target.value)}
+        placeholder="Post to this Space…"
+        maxLength={4000}
       />
+      <div>
+        <ImageUploader scope="post" onChange={setMediaIds} />
+      </div>
       <div className="flex justify-end">
         <button
           disabled={disabled}

@@ -1,27 +1,49 @@
-// src/components/SidebarRight.tsx
+'use client';
+import * as React from 'react';
+
 export default function SidebarRight() {
   return (
-    <div className="space-y-3">
-      <div className="card">
-        <div className="text-sm font-semibold">Now</div>
-        <p className="mt-2 text-sm text-muted">
-          This panel can host trends, admin notes, or step‑by‑step onboarding.
-        </p>
+    <div className="rail">
+      {/* Explore Trends */}
+      <div className="panel p-4">
+        <h3 className="mb-2 font-semibold">Explore Trends</h3>
+        <div className="trends-list">
+          <div className="trend">#soonab</div><div className="count">1,680</div>
+          <div className="trend">#glassUI</div><div className="count">892</div>
+          <div className="trend">#chronological</div><div className="count">451</div>
+        </div>
       </div>
-      <div className="card">
-        <div className="text-sm font-semibold">Trends</div>
-        <ul className="mt-2 space-y-2 text-sm">
-          <li className="flex justify-between">
-            <span>#soonab</span><span className="text-muted">1,204</span>
-          </li>
-          <li className="flex justify-between">
-            <span>#glassUI</span><span className="text-muted">782</span>
-          </li>
-          <li className="flex justify-between">
-            <span>#chronological</span><span className="text-muted">341</span>
-          </li>
-        </ul>
+
+      {/* Discover Spaces (glass style) */}
+      <div className="glass p-4">
+        <h3 className="mb-2 font-semibold">Discover Spaces</h3>
+
+        <div className="mini-avatars mb-3">
+          <img src="/icons/placeholder.png" alt="" />
+          <img src="/icons/placeholder.png" alt="" />
+          <img src="/icons/placeholder.png" alt="" />
+        </div>
+
+        <div className="text-sm text-[color:var(--ink-700)]">
+          <div className="mb-2">
+            <span className="font-medium">From "Design Inspiration" Feed</span>
+            <span> — hosted by <a className="underline" href="/s/tech_lead">@tech_lead</a></span>
+          </div>
+          <button className="btn-ghost">View all</button>
+        </div>
+      </div>
+
+      {/* Featured Spaces */}
+      <div className="panel p-4">
+        <h3 className="mb-2 font-semibold">Featured Spaces</h3>
+        <div className="flex flex-wrap gap-8">
+          <div className="flex flex-wrap gap-8">
+            <a className="pill" href="/space/futuretech">#futuretech</a>
+            <a className="pill" href="/space/design">#design</a>
+            <a className="pill" href="/space/photography">#photography</a>
+          </div>
+        </div>
       </div>
     </div>
-  )
+  );
 }

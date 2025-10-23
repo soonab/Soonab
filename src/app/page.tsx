@@ -1,5 +1,5 @@
 // src/app/page.tsx
-export const dynamic = 'force-dynamic'; // respect cookies on each request
+export const dynamic = 'force-dynamic';
 
 import { prisma } from '@/lib/db';
 import Composer from '@/components/Composer';
@@ -14,87 +14,65 @@ import { getAuthedUserId } from '@/lib/auth';
 import { SITE } from '@/lib/site';
 import { serializeAttachments } from '@/lib/media';
 
-/**
- * Home = Public feed (chronological).
- * - PUBLIC only, newest-first
- * - Hide non-ACTIVE content (moderation)
- * - Replies PUBLIC-only for now
- *
- * Guardrails: see ARCHITECTURE.md + ADRs.
- * Chronological only (no ranking), private reactions, one public metric for quotas.
- */
 export default async function Home() {
-  // Determine signed-in state (used for CTA visibility)
   const uid = await getAuthedUserId();
 
   const posts = await prisma.post.findMany({
     where: { visibility: 'PUBLIC', state: 'ACTIVE' },
-    orderBy: { createdAt: 'desc' }, // strictly chronological
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 50,
     include: {
       replies: {
         where: { visibility: 'PUBLIC', state: 'ACTIVE' },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
-      media: {
-        include: {
-          media: {
-            include: { variants: true },
-          },
-        },
-      },
+      media: { include: { media: { include: { variants: true } } } },
     },
   });
 
-  // Pseudonymous profiles + reputation scores for feed authors (legacy sessions path)
   const sids = Array.from(
-    new Set(
-      posts
-        .flatMap((p) => [p.sessionId, ...p.replies.map((r) => r.sessionId)])
-        .filter(Boolean) as string[]
-    )
+    new Set(posts.flatMap(p => [p.sessionId, ...p.replies.map(r => r.sessionId)]).filter(Boolean) as string[])
   );
 
-  const profiles = sids.length
-    ? await prisma.sessionProfile.findMany({ where: { sessionId: { in: sids } } })
-    : [];
-  const scores = sids.length
-    ? await prisma.reputationScore.findMany({ where: { sessionId: { in: sids } } })
-    : [];
+  const [profiles, scores] = await Promise.all([
+    sids.length
+      ? prisma.sessionProfile.findMany({ where: { sessionId: { in: sids } } })
+      : Promise.resolve([] as any[]),
+    sids.length
+      ? prisma.reputationScore.findMany({ where: { sessionId: { in: sids } } })
+      : Promise.resolve([] as any[]),
+  ]);
 
-  const bySid = new Map(profiles.map((p) => [p.sessionId, p]));
-  const scoreBySid = new Map(scores.map((s) => [s.sessionId, s]));
+  const bySid = new Map(profiles.map((p: any) => [p.sessionId, p]));
+  const scoreBySid = new Map(scores.map((s: any) => [s.sessionId, s]));
 
   return (
-    <div className="space-y-6">
-     {/* Intro card */}
-<div className="card">
-  <div className="mb-2 flex items-center gap-3">
-    <h1 className="text-2xl md:text-[28px] font-extrabold leading-tight tracking-tight text-[color:var(--brand-teal)]">
-      {SITE.name}
-    </h1>
-    {SITE.stage && (
-      <span className="badge select-none">{SITE.stage}</span>
-    )}
-  </div>
+    <section className="space-y-6">
+      {/* Intro panel */}
+      <div className="panel p-6">
+        <div className="mb-2 flex items-center gap-3">
+          <h1 className="text-2xl md:text-[28px] font-extrabold leading-tight tracking-tight text-[color:var(--brand-teal)]">
+            {SITE.name}
+          </h1>
+          {SITE.stage && <span className="badge select-none">{SITE.stage}</span>}
+        </div>
 
-  <p className="text-[15px] text-[color:var(--ink-700)] mb-4">
-    Real people. Real connection.
-  </p>
+        <p className="text-[15px] text-[color:var(--ink-700)] mb-4">
+          Real people. Real connection.
+        </p>
 
-  {/* Show sign-in CTA when signed out */}
-  {!uid && (
-    <div className="mb-4">
-      <LoginCtaCard />
-    </div>
-  )}
+        {!uid && (
+          <div className="mb-4">
+            <LoginCtaCard />
+          </div>
+        )}
 
-  {/* Composer stays visible; moderation/quotas enforce posting rights */}
-  <Composer />
-</div>
+        <div className="composer">
+          <Composer />
+        </div>
+      </div>
 
-
-      {/* Public feed (chronological) */}
+      {/* Chronological feed */}
       <ul className="space-y-6">
         {posts.map((p) => {
           const prof = p.sessionId ? bySid.get(p.sessionId) : null;
@@ -116,21 +94,15 @@ export default async function Home() {
 
           return (
             <li key={p.id} className="feed-card">
-              {/* Post header */}
               <div className="mb-1 flex items-center gap-2 text-xs">
-                <a className="underline" href={`/s/${handle}`}>
-                  @{handle}
-                </a>
+                <a className="underline" href={`/s/${handle}`}>@{handle}</a>
                 <ScoreBadge bm={sc?.bayesianMean} count={sc?.count} />
                 <StarRater targetHandle={handle} />
               </div>
 
-              {/* Post body */}
               <BodyText text={p.body} />
-
               <AttachmentGrid attachments={attachments} />
 
-              {/* Post meta */}
               <div className="mt-2 text-xs text-gray-500">
                 {new Date(p.createdAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
               </div>
@@ -139,7 +111,6 @@ export default async function Home() {
                 <ReportButton targetType="POST" targetId={p.id} />
               </div>
 
-              {/* Replies (PUBLIC-only for now) */}
               {p.replies.length > 0 && (
                 <ul className="mt-3 space-y-2">
                   {p.replies.map((r) => {
@@ -150,19 +121,15 @@ export default async function Home() {
                     return (
                       <li key={r.id} className="card">
                         <div className="mb-1 flex items-center gap-2 text-[11px]">
-                          <a className="underline" href={`/s/${rhandle}`}>
-                            @{rhandle}
-                          </a>
+                          <a className="underline" href={`/s/${rhandle}`}>@{rhandle}</a>
                           <ScoreBadge bm={rs?.bayesianMean} count={rs?.count} />
                           <StarRater targetHandle={rhandle} />
                         </div>
 
                         <BodyText text={r.body} />
-
                         <div className="mt-1 text-[11px] text-gray-500">
                           {new Date(r.createdAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
                         </div>
-
                         <div className="mt-1">
                           <ReportButton targetType="REPLY" targetId={r.id} />
                         </div>
@@ -172,7 +139,6 @@ export default async function Home() {
                 </ul>
               )}
 
-              {/* Reply composer */}
               <ReplyComposer postId={p.id} />
             </li>
           );
@@ -180,6 +146,6 @@ export default async function Home() {
 
         {posts.length === 0 && <li className="text-sm text-gray-500">No posts yet.</li>}
       </ul>
-    </div>
+    </section>
   );
 }

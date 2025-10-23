@@ -11,10 +11,11 @@ import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
 import { assertSameOrigin, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
+import { serializeAttachments } from '@/lib/media';
 
 const REPLY_MAX = 500;
 
-// GET: list PUBLIC ACTIVE replies asc (cursor)
+// GET: list PUBLIC ACTIVE replies asc (cursor) — WITH attachments
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -25,7 +26,7 @@ export async function GET(
 
   const base = { postId, state: 'ACTIVE' as const, visibility: 'PUBLIC' as const };
 
-  const items = await prisma.reply.findMany({
+  const rows = await prisma.reply.findMany({
     where: cur
       ? {
           ...base,
@@ -37,20 +38,59 @@ export async function GET(
       : base,
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: limit,
+    select: {
+      id: true,
+      body: true,
+      createdAt: true,
+      profile: { select: { id: true, handle: true, displayName: true } },
+      // Join through ReplyMedia -> Media -> MediaVariant
+      media: {
+        include: {
+          media: {
+            include: {
+              variants: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Map DB rows → API shape + attachments[]
+  const items = rows.map((r) => {
+    const attachments = serializeAttachments(
+      r.media.map((link) => ({
+        id: link.mediaId,
+        variants: link.media.variants.map((v) => ({
+          role: v.role,
+          key: v.key,
+          width: v.width,
+          height: v.height,
+          contentType: v.contentType,
+        })),
+      }))
+    );
+    return {
+      id: r.id,
+      body: r.body,
+      createdAt: r.createdAt,
+      profile: r.profile,
+      attachments,
+    };
   });
 
   const nextCursor =
-    items.length === limit
+    rows.length === limit
       ? encodeCursor({
-          createdAt: items[items.length - 1]!.createdAt.toISOString(),
-          id: items[items.length - 1]!.id,
+          createdAt: rows[rows.length - 1]!.createdAt.toISOString(),
+          id: rows[rows.length - 1]!.id,
         })
       : null;
 
   return NextResponse.json({ ok: true, items, nextCursor });
 }
 
-// POST: create reply (PUBLIC)
+// POST: create reply (PUBLIC) + optional image attachments via mediaIds
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -69,9 +109,13 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Cannot reply to a non-active post' }, { status: 400 });
   }
 
-  const body = String(payload?.body ?? '').trim();
-  if (!body) return NextResponse.json({ ok: false, error: 'Body is required' }, { status: 400 });
-  if (body.length > REPLY_MAX) {
+  const text = String(payload?.body ?? '').trim();
+  const mediaIds: string[] = Array.isArray(payload?.mediaIds) ? payload.mediaIds.filter(Boolean) : [];
+
+  if (!text && mediaIds.length === 0) {
+    return NextResponse.json({ ok: false, error: 'Body or media required' }, { status: 400 });
+  }
+  if (text.length > REPLY_MAX) {
     return NextResponse.json({ ok: false, error: `Too long (max ${REPLY_MAX})` }, { status: 400 });
   }
 
@@ -90,11 +134,17 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
   }
 
-  const hashtags = extractTags(body);
+  const hashtags = text ? extractTags(text) : [];
 
   const created = await prisma.$transaction(async (tx) => {
     const reply = await tx.reply.create({
-      data: { postId, sessionId: sid, profileId: profileId ?? null, body, visibility: Visibility.PUBLIC },
+      data: {
+        postId,
+        sessionId: sid,
+        profileId: profileId ?? null,
+        body: text,
+        visibility: Visibility.PUBLIC,
+      },
     });
 
     if (hashtags.length) {
@@ -114,6 +164,13 @@ export async function POST(
           skipDuplicates: true,
         });
       }
+    }
+
+    if (mediaIds.length) {
+      await tx.replyMedia.createMany({
+        data: mediaIds.map((mid) => ({ replyId: reply.id, mediaId: mid })),
+        skipDuplicates: true,
+      });
     }
 
     return reply;

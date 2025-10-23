@@ -13,16 +13,16 @@ export default async function MyCommunitiesPanel() {
     take: 20,
   });
 
-  if (!rows.length) return null;
+  if (rows.length === 0) return null;
 
   return (
     <div className="rounded-md border p-3">
       <div className="font-semibold mb-2">My Communities</div>
       <ul className="space-y-1">
-        {rows.map(({ space }) => (
-          <li key={space.slug}>
-            <Link className="text-teal-700 hover:underline" href={`/space/${space.slug}`}>
-              #{space.name}
+        {rows.map((row) => (
+          <li key={row.space.slug}>
+            <Link className="text-teal-700 hover:underline" href={`/space/${row.space.slug}`}>
+              #{row.space.name}
             </Link>
           </li>
         ))}

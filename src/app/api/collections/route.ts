@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { Prisma } from '@prisma/client';
-import type { Visibility as PostVisibility } from '@prisma/client';
+import type { CollectionVisibility } from '@prisma/client';
 
 import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       data: {
         slug,
         title: payload.title,
-        visibility: visibility as unknown as PostVisibility,
+        visibility: visibility as CollectionVisibility,
         ownerId,
       },
     });

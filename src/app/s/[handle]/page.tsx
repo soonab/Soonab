@@ -7,6 +7,7 @@ import ReportButton from '@/components/ReportButton';
 import VisibilityBadge from '@/components/VisibilityBadge';
 import RelationshipButtons from '@/components/RelationshipButtons';
 import type { Visibility } from '@prisma/client';
+import AddToCollection from '@/components/collections/AddToCollection';
 
 export default async function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
   // ✅ Next 15: params must be awaited
@@ -110,8 +111,9 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
                 <VisibilityBadge v={p.visibility} />
               </div>
               <BodyText text={p.body} />
-              <div className="mt-2">
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
                 <ReportButton targetType="POST" targetId={p.id} />
+                <AddToCollection postId={p.id} />
               </div>
 
               {p.replies.length > 0 && (

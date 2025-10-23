@@ -10,6 +10,7 @@ import ScoreBadge from '@/components/ScoreBadge';
 import StarRater from '@/components/StarRater';
 import LoginCtaCard from '@/components/LoginCtaCard';
 import { AttachmentGrid } from '@/components/media/AttachmentGrid';
+import AddToCollection from '@/components/collections/AddToCollection';
 import { getAuthedUserId } from '@/lib/auth';
 import { SITE } from '@/lib/site';
 import { serializeAttachments } from '@/lib/media';
@@ -107,8 +108,9 @@ export default async function Home() {
                 {new Date(p.createdAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
               </div>
 
-              <div className="mt-2">
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
                 <ReportButton targetType="POST" targetId={p.id} />
+                <AddToCollection postId={p.id} />
               </div>
 
               {p.replies.length > 0 && (

@@ -1,4 +1,4 @@
-import type { Visibility } from '@prisma/client'
+import type { Prisma, Visibility } from '@prisma/client'
 
 import { prisma } from '@/lib/db'
 
@@ -29,4 +29,36 @@ export async function canSeeField(
   }
 
   return false
+}
+
+export function audienceWhereForViewer(viewerPid: string | null): Prisma.PostWhereInput {
+  const base: Prisma.PostWhereInput = { state: 'ACTIVE' }
+
+  if (!viewerPid) {
+    return { ...base, visibility: 'PUBLIC' }
+  }
+
+  return {
+    ...base,
+    OR: [
+      { visibility: 'PUBLIC' },
+      { profileId: viewerPid },
+      {
+        visibility: 'FOLLOWERS',
+        profile: {
+          followerConnections: {
+            some: { followerProfileId: viewerPid },
+          },
+        },
+      },
+      {
+        visibility: 'TRUSTED',
+        profile: {
+          trustGiven: {
+            some: { trusteeProfileId: viewerPid },
+          },
+        },
+      },
+    ],
+  }
 }

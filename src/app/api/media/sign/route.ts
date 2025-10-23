@@ -20,7 +20,8 @@ function inferExt(params: { contentType?: string; name?: string }): string | nul
   if (contentType && byType[contentType]) return byType[contentType];
   const m = name?.toLowerCase().match(/\.(jpe?g|png|webp)$/);
   if (!m) return null;
-  const e = m[1];
+  const e = m[1] ?? '';
+  if (!e) return null;
   return e === 'jpeg' ? 'jpg' : e;
 }
 

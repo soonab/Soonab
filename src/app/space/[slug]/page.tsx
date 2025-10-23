@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
 import SpaceJoinButton from '@/components/SpaceJoinButton';
+import SpaceComposer from '@/components/SpaceComposer';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,9 @@ export default async function SpacePage({ params }: { params: { slug: string } }
           </div>
           <SpaceJoinButton slug={space.slug} initialJoined={joined} />
         </header>
+
+        {/* Scoped composer (posting requires membership via API) */}
+        <SpaceComposer spaceSlug={space.slug} />
 
         <ul className="space-y-4">
           {data.posts?.map((p: any) => (

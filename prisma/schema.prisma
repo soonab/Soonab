@@ -14,8 +14,9 @@ datasource db {
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
-/// *
-//  * Users & Profiles (Step-5)
+/// ==========================
+/// Users & Profiles (Step-5)
+/// ==========================
 model User {
   id        String       @id @default(cuid())
   email     String       @unique
@@ -26,45 +27,57 @@ model User {
 }
 
 model Profile {
-  id                   String             @id @default(cuid())
-  userId               String
-  handle               String             @unique
-  displayName          String?
-  bio                  String?
-  bioVisibility        Visibility         @default(PUBLIC)
-  location             String?
-  locationVisibility   Visibility         @default(PUBLIC)
-  isDeleted            Boolean            @default(false)
-  createdAt            DateTime           @default(now())
-  followingConnections Follow[]           @relation("follows_follower")
-  followerConnections  Follow[]           @relation("follows_following")
+  id                 String     @id @default(cuid())
+  userId             String
+  handle             String     @unique
+  displayName        String?
+  bio                String?
+  bioVisibility      Visibility @default(PUBLIC)
+  location           String?
+  locationVisibility Visibility @default(PUBLIC)
+  isDeleted          Boolean    @default(false)
+  createdAt          DateTime   @default(now())
+
+  followingConnections Follow[]         @relation("follows_follower")
+  followerConnections  Follow[]         @relation("follows_following")
   posts                Post[]
   media                Media[]
   links                ProfileLink[]
-  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   penalties            ProfilePenalty[]
   replies              Reply[]
+
+  // Reputation-by-profile (older model)
   raterProfileRatings  ReputationRating[] @relation("RaterProfileRatings")
   targetProfileRatings ReputationRating[] @relation("TargetProfileRatings")
   score                ReputationScore?
-  trustReceived        Trust[]            @relation("trusts_trustee")
-  trustGiven           Trust[]            @relation("trusts_truster")
-  orgVerifications     OrgVerification[]
-  conversationsAsA     Conversation[]     @relation("ConversationMemberA")
-  conversationsAsB     Conversation[]     @relation("ConversationMemberB")
-  conversationsCreated Conversation[]     @relation("ConversationCreatedBy")
-  messagesSent         Message[]
-  dmBlocksInitiated    DMBlock[]          @relation("DMBlocker")
-  dmBlocksReceived     DMBlock[]          @relation("DMBlocked")
 
-  // NEW back-relations for Spaces/Collections (fixes P1012)
+  // Social trust
+  trustReceived Trust[] @relation("trusts_trustee")
+  trustGiven    Trust[] @relation("trusts_truster")
+
+  // Org verification
+  orgVerifications OrgVerification[]
+
+  // DMs
+  conversationsAsA     Conversation[] @relation("ConversationMemberA")
+  conversationsAsB     Conversation[] @relation("ConversationMemberB")
+  conversationsCreated Conversation[] @relation("ConversationCreatedBy")
+  messagesSent         Message[]
+  dmBlocksInitiated    DMBlock[]      @relation("DMBlocker")
+  dmBlocksReceived     DMBlock[]      @relation("DMBlocked")
+
+  // Spaces / Collections
   createdSpaces    Space[]           @relation("ProfileCreatedSpaces")
   spaceMemberships SpaceMembership[]
   ownedCollections Collection[]      @relation("ProfileOwnedCollections")
+  PostRating       PostRating[]
+  ReplyRating      ReplyRating[]
 }
 
-/// *
-//  * Magic link tokens
+/// ==========================
+/// Magic links & setup
+/// ==========================
 model MagicLinkToken {
   id        String    @id @default(cuid())
   email     String
@@ -76,15 +89,14 @@ model MagicLinkToken {
   @@index([email, expiresAt])
 }
 
-/// *
-//  * Setup marker
 model SetupCheck {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 }
 
-/// *
-//  * Posts & Replies
+/// ==========================
+/// Posts & Replies
+/// ==========================
 model Post {
   id         String       @id @default(cuid())
   sessionId  String?
@@ -95,22 +107,24 @@ model Post {
   state      ContentState @default(ACTIVE)
   spaceId    String?
 
-  profile Profile?    @relation(fields: [profileId], references: [id])
-  space   Space?      @relation(fields: [spaceId], references: [id])
+  profile Profile? @relation(fields: [profileId], references: [id])
+  space   Space?   @relation(fields: [spaceId], references: [id])
+
   replies Reply[]
   tags    PostTag[]
   media   PostMedia[]
 
-  // NEW back-relation for Collections (fixes P1012 on CollectionEntry.post)
+  // Collections back-link
   collectionEntries CollectionEntry[]
+
+  // Per-post ratings
+  ratings PostRating[]
 
   // Deterministic chrono cursor: composite unique alias used as `createdAt_id`
   @@unique([createdAt, id], name: "createdAt_id", map: "uq_post_created_id")
-  // Indices for chronological + filters
   @@index([createdAt(sort: Desc)])
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
-  // Space feed filter + order
   @@index([spaceId, createdAt, id], map: "idx_post_space_created_id")
 }
 
@@ -127,14 +141,17 @@ model Reply {
   post    Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
   profile Profile?     @relation(fields: [profileId], references: [id])
   tags    ReplyTag[]
-  media   ReplyMedia[] // NEW: images attached to this reply
+  media   ReplyMedia[]
+
+  // Per-reply ratings
+  ratings ReplyRating[]
 
   @@index([profileId, createdAt(sort: Desc)])
   @@index([state, createdAt(sort: Desc)])
   @@index([postId, createdAt, id], map: "idx_reply_post_created_id_asc")
 }
 
-// NEW join table to link replies ↔ media
+// Link replies ↔ media
 model ReplyMedia {
   replyId String
   mediaId String
@@ -173,6 +190,9 @@ model ReplyTag {
   @@index([tagId, replyId])
 }
 
+/// ==========================
+/// Moderation
+/// ==========================
 model ModerationReport {
   id         String       @id @default(cuid())
   sessionId  String?
@@ -212,8 +232,9 @@ model ProfilePenalty {
   @@index([until])
 }
 
-/// *
-//  * Pseudonymous session profile (pre-accounts)
+/// ==========================
+/// Pseudonymous Session Profile
+/// ==========================
 model SessionProfile {
   id            String             @id @default(cuid())
   sessionId     String             @unique
@@ -223,8 +244,9 @@ model SessionProfile {
   targetRatings ReputationRating[] @relation("TargetRatings")
 }
 
-/// *
-//  * Ratings (support session- and profile-based IDs)
+/// ==========================
+/// Legacy reputation-by-profile
+/// ==========================
 model ReputationRating {
   id              String          @id @default(cuid())
   targetSessionId String?
@@ -247,8 +269,6 @@ model ReputationRating {
   @@index([targetProfileId, updatedAt], map: "idx_reputation_target_profile_updated")
 }
 
-/// *
-//  * Cached aggregates
 model ReputationScore {
   sessionId    String   @id
   count        Int      @default(0)
@@ -260,8 +280,6 @@ model ReputationScore {
   profile      Profile? @relation(fields: [profileId], references: [id])
 }
 
-/// *
-//  * Step-4 suspicion flags
 model ReputationFlag {
   id              String   @id @default(cuid())
   targetSessionId String
@@ -276,8 +294,9 @@ model ReputationFlag {
   @@index([targetSessionId, createdAt(sort: Desc)])
 }
 
-/// *
-//  * Step-6 audience edges
+/// ==========================
+/// Audience graph
+/// ==========================
 model Follow {
   followerProfileId  String
   followingProfileId String
@@ -302,8 +321,9 @@ model Trust {
   @@index([createdAt(sort: Desc)])
 }
 
-/// *
-//  * Step-12 — Direct Messages (text-only, 1:1)
+/// ==========================
+/// Direct Messages (Step-12)
+/// ==========================
 enum ConversationStatus {
   PENDING
   ACTIVE
@@ -358,6 +378,9 @@ model DMBlock {
   @@unique([blockerId, blockedId, conversationId])
 }
 
+/// ==========================
+/// Accounts & auth
+/// ==========================
 model Account {
   id         String       @id @default(cuid())
   userId     String
@@ -398,8 +421,9 @@ model OAuthState {
   @@index([expiresAt])
 }
 
-/// === Step 14: Profile fields & verification ===
-
+/// ==========================
+/// Profile fields & org verification
+/// ==========================
 model ProfileLink {
   id         String     @id @default(cuid())
   profileId  String
@@ -426,8 +450,9 @@ model OrgVerification {
   verifiedAt DateTime?
 }
 
-// === Spaces & Collections ===
-
+/// ==========================
+/// Spaces & Collections
+/// ==========================
 model Space {
   id          String   @id @default(cuid())
   slug        String   @unique
@@ -456,10 +481,6 @@ model SpaceMembership {
   @@unique([spaceId, profileId], name: "spaceId_profileId")
   @@index([profileId])
 }
-
-/// --- Collections (Step-16) ---
-/// Visibility is per-collection (PUBLIC | PRIVATE).
-/// Entries are unique per (collectionId, postId) and ordered by addedAt DESC.
 
 enum CollectionVisibility {
   PUBLIC
@@ -491,55 +512,74 @@ model CollectionEntry {
   @@index([collectionId, addedAt(sort: Desc)])
 }
 
-enum OrgVerifyStatus {
-  PENDING
-  VERIFIED
-  REVOKED
+/// ==========================
+/// Post & Reply Ratings (Nosedive)
+/// ==========================
+model PostRating {
+  id     String @id @default(cuid())
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // Guest/session identity; set for guests and signed-in users.
+  raterSessionId String
+
+  // Signed-in identity; NULL for guests. When set, enforces 1 vote per profile.
+  raterProfileId String?
+  raterProfile   Profile? @relation(fields: [raterProfileId], references: [id])
+
+  // 1..5 stars
+  value Int
+
+  // Rater weight (derived from rater's reputation; bounded)
+  weight Float @default(1)
+
+  // Pre-multiplied for SUM aggregation
+  weightedValue Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([postId, raterSessionId], name: "uq_post_rater_session")
+  @@unique([postId, raterProfileId], name: "uq_post_rater_profile")
+  @@index([postId])
+  @@index([raterSessionId])
+  @@index([raterProfileId])
 }
 
-enum OrgVerifyMethod {
-  EMAIL_DOMAIN
-  MANUAL
+model ReplyRating {
+  id      String @id @default(cuid())
+  replyId String
+  reply   Reply  @relation(fields: [replyId], references: [id], onDelete: Cascade)
+
+  // Guest/session identity; set for guests and signed-in users.
+  raterSessionId String
+
+  // Signed-in identity; NULL for guests. When set, enforces 1 vote per profile.
+  raterProfileId String?
+  raterProfile   Profile? @relation(fields: [raterProfileId], references: [id])
+
+  // 1..5 stars
+  value Int
+
+  // Rater weight
+  weight Float @default(1)
+
+  // weight * value
+  weightedValue Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([replyId, raterSessionId], name: "uq_reply_rater_session")
+  @@unique([replyId, raterProfileId], name: "uq_reply_rater_profile")
+  @@index([replyId])
+  @@index([raterSessionId])
+  @@index([raterProfileId])
 }
 
-/// *
-//  * Visibility & Content State
-enum Visibility {
-  PUBLIC
-  FOLLOWERS
-  TRUSTED
-}
-
-enum ContentState {
-  ACTIVE
-  HIDDEN
-  REMOVED
-}
-
-/// *
-//  * Moderation — reports, actions, penalties
-enum ReportTarget {
-  POST
-  REPLY
-}
-
-enum ModerationActionType {
-  HIDE
-  UNHIDE
-  REMOVE
-  BLOCK_PROFILE
-  UNBLOCK_PROFILE
-  FLAG
-}
-
-enum ModerationTarget {
-  POST
-  REPLY
-  PROFILE
-  CONVERSATION
-  MESSAGE
-}
-
+/// ==========================
+/// Media
+/// ==========================
 model Media {
   id             String           @id @default(cuid())
   ownerProfileId String
@@ -553,7 +593,7 @@ model Media {
   variants       MediaVariant[]
   posts          PostMedia[]
   messages       DMMessageMedia[]
-  replies        ReplyMedia[] // NEW back-relation (optional to use)
+  replies        ReplyMedia[] // back-relation
   createdAt      DateTime         @default(now())
   deletedAt      DateTime?
   ownerProfile   Profile          @relation(fields: [ownerProfileId], references: [id])
@@ -592,6 +632,54 @@ model DMMessageMedia {
   @@id([messageId, mediaId])
 }
 
+/// ==========================
+/// Enums
+/// ==========================
+enum OrgVerifyStatus {
+  PENDING
+  VERIFIED
+  REVOKED
+}
+
+enum OrgVerifyMethod {
+  EMAIL_DOMAIN
+  MANUAL
+}
+
+enum Visibility {
+  PUBLIC
+  FOLLOWERS
+  TRUSTED
+}
+
+enum ContentState {
+  ACTIVE
+  HIDDEN
+  REMOVED
+}
+
+enum ReportTarget {
+  POST
+  REPLY
+}
+
+enum ModerationActionType {
+  HIDE
+  UNHIDE
+  REMOVE
+  BLOCK_PROFILE
+  UNBLOCK_PROFILE
+  FLAG
+}
+
+enum ModerationTarget {
+  POST
+  REPLY
+  PROFILE
+  CONVERSATION
+  MESSAGE
+}
+
 enum MediaKind {
   IMAGE
 }
@@ -614,8 +702,6 @@ enum PenaltyKind {
   PERMA_BAN
 }
 
-/// *
-//  * Step-8 — Google OAuth v1
 enum AuthProvider {
   GOOGLE
 }

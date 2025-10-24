@@ -1,195 +1,261 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import * as React from 'react';
 
-import { apiFetch } from '@/lib/csrf-client';
-
-type MyCollection = {
+type CollectionRow = {
   slug: string;
   title: string;
-  _count?: {
-    entries: number;
-  };
+  visibility: 'PUBLIC' | 'PRIVATE';
+  _count?: { entries: number };
 };
 
-interface CollectionsResponse {
-  collections?: MyCollection[];
+function getCsrfHeaders() {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (typeof document !== 'undefined') {
+    const meta = document.querySelector('meta[name="csrf"]') as HTMLMetaElement | null;
+    const token = meta?.content || (typeof window !== 'undefined' ? (window as any).__CSRF : undefined);
+    if (token) { h['X-CSRF'] = token; h['X-CSRF-Token'] = token; }
+  }
+  return h;
 }
 
 export default function AddToCollection({ postId }: { postId: string }) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [collections, setCollections] = useState<MyCollection[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
+  const [open, setOpen] = React.useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    const controller = new AbortController();
+  // list / selection
+  const [loading, setLoading] = React.useState(false);
+  const [collections, setCollections] = React.useState<CollectionRow[]>([]);
+  const [selectedSlug, setSelectedSlug] = React.useState<string | null>(null);
 
-    async function load() {
-      try {
-        setError(null);
-        const res = await fetch('/api/collections?owner=me', {
-          cache: 'no-store',
-          credentials: 'same-origin',
-          signal: controller.signal,
-        });
+  // create mode
+  const [mode, setMode] = React.useState<'choose' | 'create'>('choose');
+  const [title, setTitle] = React.useState('');
+  const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
 
-        if (cancelled) return;
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
 
-        if (res.status === 401) {
-          throw new Error('Sign in to use collections');
-        }
-        if (!res.ok) {
-          throw new Error('Failed to load collections');
-        }
-
-        const data = (await res.json()) as CollectionsResponse;
-        setCollections(data.collections ?? []);
-      } catch (err) {
-        if (cancelled) return;
-        if ((err as Error).name === 'AbortError') return;
-        setError((err as Error).message || 'Unable to load collections');
-      }
-    }
-
-    load();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      setCollections([]);
-      setSelected(null);
-      setOk(null);
-      setError(null);
-    }
-  }, [open]);
-
-  const close = useCallback(() => {
-    setOpen(false);
-  }, []);
-
-  const canSubmit = Boolean(selected) && !loading;
-
-  async function add() {
-    if (!selected) return;
+  async function loadCollections() {
     setLoading(true);
-    setError(null);
-    setOk(null);
+    setMsg(null);
     try {
-      const res = await apiFetch(`/api/collections/${selected}/entries`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId }),
-      });
-
-      if (res.status === 201) {
-        setOk('Added to collection');
-        return;
-      }
-
-      let message = `Failed with ${res.status}`;
-      try {
-        const json = await res.json();
-        if (json?.error) {
-          message = json.error;
-        }
-      } catch {
-        // ignore JSON parse failures and use fallback message
-      }
-      throw new Error(message);
-    } catch (err) {
-      setError((err as Error).message || 'Failed to add to collection');
+      const res = await fetch('/api/collections?owner=me', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) throw new Error(`Load failed (${res.status})`);
+      const j = await res.json();
+      const rows: CollectionRow[] = j.items ?? j.collections ?? [];
+      setCollections(rows);
+      // default select first
+      if (rows.length && !selectedSlug) setSelectedSlug(rows[0]!.slug);
+      // if none, go to create mode
+      if (!rows.length) setMode('create');
+    } catch (e: any) {
+      setMsg(e.message || 'Error loading collections');
     } finally {
       setLoading(false);
     }
   }
 
+  function onOpen() {
+    setOpen(true);
+    // reset transient state
+    setMsg(null);
+    setBusy(false);
+    // always refresh so the list is up-to-date
+    loadCollections();
+  }
+
+  function onClose() {
+    setOpen(false);
+    // keep list in memory but clear transient errors
+    setMsg(null);
+    setBusy(false);
+  }
+
+  async function createAndMaybeAdd({ alsoAdd }: { alsoAdd: boolean }) {
+    if (!title.trim()) {
+      setMsg('Please enter a title');
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/collections', {
+        method: 'POST',
+        credentials: 'include',
+        headers: getCsrfHeaders(),
+        body: JSON.stringify({ title: title.trim(), visibility: visibility.toLowerCase() }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as any));
+        throw new Error(j.error || `Create failed (${res.status})`);
+      }
+      const j = await res.json().catch(() => ({} as any));
+      const col: CollectionRow = j.collection ?? j.item ?? j ?? null;
+      setTitle('');
+      // reload list so it shows up
+      await loadCollections();
+      if (col?.slug) setSelectedSlug(col.slug);
+      if (alsoAdd && col?.slug) {
+        await addTo(col.slug);
+      } else {
+        setMode('choose');
+        setMsg('Collection created');
+      }
+    } catch (e: any) {
+      setMsg(e.message || 'Error creating collection');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addTo(slug: string) {
+    if (!slug) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/collections/${encodeURIComponent(slug)}/entries`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getCsrfHeaders(),
+        body: JSON.stringify({ postId }),
+      });
+      if (res.status === 409) { // already exists
+        setMsg('Already in this collection');
+        setTimeout(() => setMsg(null), 1200);
+        return;
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as any));
+        throw new Error(j.error || `Add failed (${res.status})`);
+      }
+      setMsg('Added!');
+      // gentle auto-close
+      setTimeout(() => { setMsg(null); onClose(); }, 700);
+    } catch (e: any) {
+      setMsg(e.message || 'Error adding to collection');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
-      <button
-        type="button"
-        className="underline text-xs disabled:opacity-50"
-        onClick={() => setOpen(true)}
-        disabled={loading}
-      >
-        Add to Collection…
-      </button>
+      <button className="underline text-xs" onClick={onOpen}>Add to Collection...</button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-modal
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4"
-          onClick={close}
-        >
+      {!open ? null : (
+        <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/30 p-3" onClick={onClose}>
           <div
-            className="w-full max-w-sm rounded-md border border-[var(--line)] bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-            onClick={(event) => event.stopPropagation()}
+            className="panel max-w-[520px] w-full mt-16 p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-base font-semibold">Add to Collection</h2>
-                <p className="text-xs opacity-70">Choose one of your collections below.</p>
-              </div>
-              <button type="button" onClick={close} className="text-sm opacity-70">
-                ✕
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold">Add to Collection</h3>
+              <button className="text-xs underline" onClick={onClose}>Close</button>
             </div>
 
-            {error && <div className="mt-3 text-xs text-red-600">{error}</div>}
-            {ok && <div className="mt-3 text-xs text-green-600">{ok}</div>}
+            {loading ? (
+              <div className="text-sm text-[color:var(--ink-600)]">Loading…</div>
+            ) : mode === 'choose' && collections.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-[13px] text-[color:var(--ink-700)]">
+                  Choose a collection, or <button className="underline" onClick={() => setMode('create')}>create a new one</button>.
+                </p>
 
-            <div className="mt-4 max-h-52 space-y-2 overflow-auto text-sm">
-              {collections.map((collection) => (
-                <label
-                  key={collection.slug}
-                  className="flex cursor-pointer items-center gap-2 rounded border border-transparent p-2 hover:border-[var(--line)]"
-                >
-                  <input
-                    type="radio"
-                    name="collection"
-                    value={collection.slug}
-                    checked={selected === collection.slug}
-                    onChange={() => setSelected(collection.slug)}
-                  />
-                  <span className="font-medium">{collection.title}</span>
-                  {typeof collection._count?.entries === 'number' && (
-                    <span className="ml-auto text-xs opacity-60">
-                      {collection._count.entries} items
-                    </span>
-                  )}
-                </label>
-              ))}
-
-              {collections.length === 0 && !error && (
-                <div className="rounded border border-dashed border-[var(--line)] p-3 text-xs opacity-70">
-                  You don’t have any collections yet.
+                <div className="max-h-56 overflow-auto rounded border">
+                  <ul className="divide-y">
+                    {collections.map((c) => (
+                      <li key={c.slug} className="flex items-center gap-3 p-2">
+                        <input
+                          type="radio"
+                          name="collection"
+                          className="accent-[color:var(--brand-teal)]"
+                          checked={selectedSlug === c.slug}
+                          onChange={() => setSelectedSlug(c.slug)}
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium">{c.title}</div>
+                          <div className="text-[11px] text-[color:var(--ink-600)]">
+                            {c.visibility === 'PUBLIC' ? 'Public' : 'Private'} · {c._count?.entries ?? 0} items
+                          </div>
+                        </div>
+                        <a className="underline text-[11px]" href={`/c/${encodeURIComponent(c.slug)}`} target="_blank">Open</a>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              )}
-            </div>
 
-            <div className="mt-4 flex justify-end gap-2 text-sm">
-              <button type="button" onClick={close} className="underline">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={add}
-                disabled={!canSubmit}
-                className="rounded bg-black px-3 py-1 text-white disabled:opacity-50 dark:bg-white dark:text-black"
-              >
-                {loading ? 'Adding…' : 'Add'}
-              </button>
-            </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button className="pill" onClick={onClose}>Cancel</button>
+                  <button
+                    className="pill-primary"
+                    disabled={!selectedSlug || busy}
+                    onClick={() => selectedSlug && addTo(selectedSlug)}
+                  >
+                    {busy ? 'Adding…' : 'Add'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // CREATE
+              <div className="space-y-3">
+                <p className="text-[13px] text-[color:var(--ink-700)]">
+                  {collections.length === 0
+                    ? `You don't have any collections yet. Create one now and we'll add this post to it.`
+                    : <>Create a new collection.</>}
+                </p>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium">Title</label>
+                  <input
+                    className="input"
+                    placeholder="e.g. Favorite Recipes"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    maxLength={128}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium">Visibility</label>
+                  <select
+                    className="input"
+                    value={visibility}
+                    onChange={(e) => setVisibility(e.target.value as any)}
+                  >
+                    <option value="PUBLIC">Public (anyone can see)</option>
+                    <option value="PRIVATE">Private (only you)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  {collections.length > 0 ? (
+                    <button className="text-xs underline" onClick={() => setMode('choose')}>
+                      Back to list
+                    </button>
+                  ) : <span />}
+
+                  <div className="flex items-center gap-2">
+                    <button className="pill" onClick={onClose}>Cancel</button>
+                    <button
+                      className="pill"
+                      disabled={busy}
+                      onClick={() => createAndMaybeAdd({ alsoAdd: false })}
+                    >
+                      {busy ? 'Working…' : 'Create'}
+                    </button>
+                    <button
+                      className="pill-primary"
+                      disabled={busy}
+                      onClick={() => createAndMaybeAdd({ alsoAdd: true })}
+                    >
+                      {busy ? 'Working…' : 'Create & Add'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {msg && <div className="mt-2 text-[12px] text-[color:var(--ink-700)]">{msg}</div>}
           </div>
         </div>
       )}

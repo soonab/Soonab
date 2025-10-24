@@ -1,153 +1,85 @@
-// src/app/api/posts/[id]/replies/route.ts
+// File: src/app/api/posts/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
-import { randomUUID } from 'crypto';
-import { Visibility } from '@prisma/client';
-import { canReply } from '@/lib/limits';
-import { ensureSessionProfile } from '@/lib/identity';
+import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
-import { hasActivePostingPenalty } from '@/lib/moderation';
-import { decodeCursor, encodeCursor } from '@/lib/pagination';
-import { assertSameOrigin, requireJson } from '@/lib/security';
+import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
+import { z } from '@/lib/zod';
 
-// Keep your existing limit for typed text
-const REPLY_MAX = 500;
+export const dynamic = 'force-dynamic';
 
-// GET: list PUBLIC ACTIVE replies asc (cursor)
-export async function GET(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const { id: postId } = await ctx.params;
-  const limit = Math.max(1, Math.min(Number(req.nextUrl.searchParams.get('limit')) || 20, 100));
-  const cur = decodeCursor(req.nextUrl.searchParams.get('cursor'));
-
-  const base = { postId, state: 'ACTIVE' as const, visibility: 'PUBLIC' as const };
-
-  const items = await prisma.reply.findMany({
-    where: cur
-      ? {
-          ...base,
-          OR: [
-            { createdAt: { gt: new Date(cur.createdAt) } },
-            { AND: [{ createdAt: new Date(cur.createdAt) }, { id: { gt: cur.id } }] },
-          ],
-        }
-      : base,
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: limit,
-  });
-
-  const nextCursor =
-    items.length === limit
-      ? encodeCursor({
-          createdAt: items[items.length - 1]!.createdAt.toISOString(),
-          id: items[items.length - 1]!.id,
-        })
-      : null;
-
-  return NextResponse.json({ ok: true, items, nextCursor });
+/**
+ * GET /api/posts
+ * Minimal stub so dev runs clean; replace with your real list implementation if you have one.
+ */
+export async function GET(_req: NextRequest, _ctx: { params: Promise<{}> }) {
+  await cookies(); // Next 15: mark dynamic
+  return NextResponse.json({ ok: true, items: [], nextCursor: null });
 }
 
-// POST: create reply (PUBLIC) + optional image attachments via mediaIds
-export async function POST(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  assertSameOrigin(req);
-  const payload = await requireJson<any>(req);
+/**
+ * POST /api/posts
+ * Create a top-level post (or a child if parentId supplied), with optional media + hashtags.
+ */
+const CreatePostSchema = z.object({
+  body: z.string().min(1).max(10000),
+  spaceId: z.string().optional(),          // Step-15 Spaces (optional)
+  parentId: z.string().optional(),         // If you allow replies via this endpoint
+  mediaIds: z.array(z.string().min(1)).max(4).optional(), // UI shows 1/1; server accepts up to 4
+});
 
-  const { id: postId } = await ctx.params;
+export async function POST(req: NextRequest) {
+  // Step-10 baseline security
+  await assertSameOrigin(req);
+  await requireCsrf(req);
+  await cookies(); // Next 15: mark dynamic
 
-  const parent = await prisma.post.findUnique({
-    where: { id: postId },
-    select: { id: true, state: true },
-  });
-  if (!parent) return NextResponse.json({ ok: false, error: 'Post not found' }, { status: 404 });
-  if (parent.state !== 'ACTIVE') {
-    return NextResponse.json({ ok: false, error: 'Cannot reply to a non-active post' }, { status: 400 });
+  const profileId = await getCurrentProfileId();
+  const { body, spaceId, parentId, mediaIds = [] } = CreatePostSchema.parse(await requireJson(req));
+
+  // If replying via this endpoint, verify the parent exists.
+  if (parentId) {
+    const parent = await prisma.post.findUnique({ where: { id: parentId }, select: { id: true } });
+    if (!parent) return NextResponse.json({ error: 'Parent post not found' }, { status: 404 });
   }
 
-  const rawBody = String(payload?.body ?? '');
-  const body = rawBody.trim();
+  const hashtags = extractTags(body);
 
-  // Allow empty text if images present, otherwise enforce text
-  const mediaIds: string[] = Array.isArray(payload?.mediaIds) ? payload.mediaIds.filter(Boolean) : [];
-  if (!body && mediaIds.length === 0) {
-    return NextResponse.json({ ok: false, error: 'Body or media required' }, { status: 400 });
-  }
-  if (body && body.length > REPLY_MAX) {
-    return NextResponse.json({ ok: false, error: `Too long (max ${REPLY_MAX})` }, { status: 400 });
-  }
-
-  const jar = await cookies();
-  let sid = jar.get('sid')?.value as string | undefined;
-  let setCookie = false;
-  if (!sid) { sid = randomUUID(); setCookie = true; }
-
-  await ensureSessionProfile(sid);
-  const profileId = await getCurrentProfileId(); // string | null
-
-  const gate = await canReply(sid, profileId ?? undefined, postId);
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
-
-  if (profileId && (await hasActivePostingPenalty(profileId))) {
-    return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
-  }
-
-  const hashtags = body ? extractTags(body) : [];
-
+  // Create post, then attach hashtags and media atomically
   const created = await prisma.$transaction(async (tx) => {
-    const reply = await tx.reply.create({
+    const post = await tx.post.create({
       data: {
-        postId,
-        sessionId: sid,
-        profileId: profileId ?? null,
         body,
-        visibility: Visibility.PUBLIC,
+        profileId,                         // <-- your schema uses profileId (not authorId)
+        ...(spaceId ? { spaceId } : {}),
+        ...(parentId ? { parentId } : {}), // If your column is replyToId, rename the key here
       },
+      select: { id: true, createdAt: true },
     });
 
     if (hashtags.length) {
       const tagRecords = await Promise.all(
         hashtags.map((name) =>
-          tx.tag.upsert({
-            where: { name },
-            update: {},
-            create: { name },
-          })
+          tx.tag.upsert({ where: { name }, update: {}, create: { name } })
         )
       );
 
-      if (tagRecords.length) {
-        await tx.replyTag.createMany({
-          data: tagRecords.map((tag) => ({ replyId: reply.id, tagId: tag.id })),
-          skipDuplicates: true,
-        });
-      }
-    }
-
-    if (mediaIds.length) {
-      await tx.replyMedia.createMany({
-        data: mediaIds.map((mid) => ({ replyId: reply.id, mediaId: mid })),
+      await tx.postTag.createMany({
+        data: tagRecords.map((tag) => ({ postId: post.id, tagId: tag.id })),
         skipDuplicates: true,
       });
     }
 
-    return reply;
+    if (mediaIds.length) {
+      await tx.postMedia.createMany({
+        data: mediaIds.map((mid) => ({ postId: post.id, mediaId: mid })),
+        skipDuplicates: true,
+      });
+    }
+
+    return post;
   });
 
-  const res = NextResponse.json({ ok: true, reply: created, quota: gate.quota ?? null });
-  if (setCookie) {
-    res.cookies.set('sid', sid, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
-  return res;
+  return NextResponse.json({ post: created }, { status: 201 });
 }

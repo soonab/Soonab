@@ -9,10 +9,10 @@ type Item = { href: string; label: string };
 
 const ITEMS: Item[] = [
   { href: '/',         label: 'Home' },
-  { href: '/explore',  label: 'Explore' },   // lights up later
-  { href: '/dm',       label: 'Direct Messages' },
+  { href: '/explore',  label: 'Explore' },
+  { href: '/dm',       label: 'Messages' },
   { href: '/me',       label: 'My profile' },
-  { href: '/settings', label: 'Settings' },  // security polish in Step‑10
+  { href: '/settings', label: 'Settings' },
 ];
 
 export default function HeaderNav() {
@@ -37,9 +37,7 @@ export default function HeaderNav() {
                 aria-current={active ? 'page' : undefined}
                 className={[
                   'h-9 px-3.5 text-[13px] font-semibold flex items-center',
-                  // separators
                   idx !== ITEMS.length - 1 ? 'border-r border-[var(--outline)]' : '',
-                  // base colors
                   active
                     ? 'bg-[var(--brand-teal)] !text-white'
                     : 'text-[color:var(--ink-700)] hover:bg-[var(--surface-2)] hover:text-[color:var(--ink-900)]',
@@ -50,16 +48,6 @@ export default function HeaderNav() {
             );
           })}
         </div>
-
-        <Link
-          href="/about"
-          className="h-9 px-3.5 text-[13px] font-medium flex items-center rounded-[10px]
-                     border border-[var(--outline)] bg-[var(--surface-0)]
-                     text-[color:var(--ink-700)]
-                     hover:bg-[var(--surface-2)] hover:text-[color:var(--ink-900)]"
-        >
-          About
-        </Link>
       </nav>
 
       {/* Mobile (under md) */}
@@ -102,15 +90,6 @@ export default function HeaderNav() {
               </Link>
             );
           })}
-          <div className="my-1 h-px bg-[var(--outline)]" />
-          <Link
-            href="/about"
-            className="block rounded-[10px] px-2.5 py-2 font-medium
-                       text-[13px] text-[color:var(--ink-700)]
-                       hover:bg-[var(--surface-2)] hover:text-[color:var(--ink-900)]"
-          >
-            About
-          </Link>
         </nav>
       )}
     </div>

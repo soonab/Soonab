@@ -11,6 +11,7 @@ export default function SidebarLeft() {
           <a className="underline block" href="/">Home</a>
           <a className="underline block" href="/explore">Explore</a>
           <a className="underline block" href="/profile">My profile</a>
+          <a className="underline block" href="/collections">My collections</a>{/* ✅ new */}
           <a className="underline block" href="/settings">Settings</a>
         </nav>
       </div>

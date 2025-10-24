@@ -1,4 +1,4 @@
-// src/app/api/posts/[id]/replies/route.ts
+// File: src/app/api/posts/[id]/replies/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
@@ -9,18 +9,22 @@ import { ensureSessionProfile } from '@/lib/identity';
 import { getCurrentProfileId } from '@/lib/auth';
 import { hasActivePostingPenalty } from '@/lib/moderation';
 import { decodeCursor, encodeCursor } from '@/lib/pagination';
-import { assertSameOrigin, requireJson } from '@/lib/security';
+import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
 import { extractTags } from '@/lib/hashtags';
 import { serializeAttachments } from '@/lib/media';
 
+export const dynamic = 'force-dynamic';
+
 const REPLY_MAX = 500;
 
-// GET: list PUBLIC ACTIVE replies asc (cursor) — WITH attachments
+/** GET: list PUBLIC ACTIVE replies (asc, cursor) — includes attachments */
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
+  await cookies(); // dynamic
   const { id: postId } = await ctx.params;
+
   const limit = Math.max(1, Math.min(Number(req.nextUrl.searchParams.get('limit')) || 20, 100));
   const cur = decodeCursor(req.nextUrl.searchParams.get('cursor'));
 
@@ -42,21 +46,19 @@ export async function GET(
       id: true,
       body: true,
       createdAt: true,
-      profile: { select: { id: true, handle: true, displayName: true } },
-      // Join through ReplyMedia -> Media -> MediaVariant
-      media: {
+      sessionId: true,
+      profileId: true,
+      media: {                      // join media -> variants
         include: {
           media: {
-            include: {
-              variants: true,
-            },
+            include: { variants: true },
           },
         },
       },
     },
   });
 
-  // Map DB rows → API shape + attachments[]
+  // Map to API items with attachments[]
   const items = rows.map((r) => {
     const attachments = serializeAttachments(
       r.media.map((link) => ({
@@ -74,7 +76,8 @@ export async function GET(
       id: r.id,
       body: r.body,
       createdAt: r.createdAt,
-      profile: r.profile,
+      profileId: r.profileId,
+      sessionId: r.sessionId,
       attachments,
     };
   });
@@ -90,14 +93,16 @@ export async function GET(
   return NextResponse.json({ ok: true, items, nextCursor });
 }
 
-// POST: create reply (PUBLIC) + optional image attachments via mediaIds
+/** POST: create PUBLIC reply (+ optional mediaIds) — returns attachments */
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  assertSameOrigin(req);
-  const payload = await requireJson<any>(req);
+  await assertSameOrigin(req);
+  await requireCsrf(req);
+  await cookies(); // dynamic
 
+  const payload = await requireJson<any>(req);
   const { id: postId } = await ctx.params;
 
   const parent = await prisma.post.findUnique({
@@ -109,13 +114,13 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Cannot reply to a non-active post' }, { status: 400 });
   }
 
-  const text = String(payload?.body ?? '').trim();
+  const body = String(payload?.body ?? '').trim();
   const mediaIds: string[] = Array.isArray(payload?.mediaIds) ? payload.mediaIds.filter(Boolean) : [];
 
-  if (!text && mediaIds.length === 0) {
+  if (!body && mediaIds.length === 0) {
     return NextResponse.json({ ok: false, error: 'Body or media required' }, { status: 400 });
   }
-  if (text.length > REPLY_MAX) {
+  if (body && body.length > REPLY_MAX) {
     return NextResponse.json({ ok: false, error: `Too long (max ${REPLY_MAX})` }, { status: 400 });
   }
 
@@ -125,7 +130,7 @@ export async function POST(
   if (!sid) { sid = randomUUID(); setCookie = true; }
 
   await ensureSessionProfile(sid);
-  const profileId = await getCurrentProfileId(); // string | null
+  const profileId = await getCurrentProfileId();
 
   const gate = await canReply(sid, profileId ?? undefined, postId);
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 429 });
@@ -134,7 +139,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Posting disabled by moderation' }, { status: 403 });
   }
 
-  const hashtags = text ? extractTags(text) : [];
+  const hashtags = body ? extractTags(body) : [];
 
   const created = await prisma.$transaction(async (tx) => {
     const reply = await tx.reply.create({
@@ -142,7 +147,7 @@ export async function POST(
         postId,
         sessionId: sid,
         profileId: profileId ?? null,
-        body: text,
+        body,
         visibility: Visibility.PUBLIC,
       },
     });
@@ -150,14 +155,9 @@ export async function POST(
     if (hashtags.length) {
       const tagRecords = await Promise.all(
         hashtags.map((name) =>
-          tx.tag.upsert({
-            where: { name },
-            update: {},
-            create: { name },
-          })
+          tx.tag.upsert({ where: { name }, update: {}, create: { name } })
         )
       );
-
       if (tagRecords.length) {
         await tx.replyTag.createMany({
           data: tagRecords.map((tag) => ({ replyId: reply.id, tagId: tag.id })),
@@ -176,7 +176,27 @@ export async function POST(
     return reply;
   });
 
-  const res = NextResponse.json({ ok: true, reply: created, quota: gate.quota ?? null });
+  // Build attachments for the response so the client can render immediately
+  const mediaRows = mediaIds.length
+    ? await prisma.media.findMany({
+        where: { id: { in: mediaIds } },
+        include: { variants: true },
+      })
+    : [];
+  const attachments = serializeAttachments(
+    mediaRows.map((m) => ({
+      id: m.id,
+      variants: m.variants.map((v) => ({
+        role: v.role,
+        key: v.key,
+        width: v.width,
+        height: v.height,
+        contentType: v.contentType,
+      })),
+    }))
+  );
+
+  const res = NextResponse.json({ ok: true, reply: created, attachments, quota: gate.quota ?? null });
   if (setCookie) {
     res.cookies.set('sid', sid, {
       httpOnly: true,

@@ -1,69 +1,62 @@
-import { prisma } from '@/lib/db';
-import { getCurrentProfileId } from '@/lib/auth';
-import SpaceJoinButton from '@/components/SpaceJoinButton';
-import SpaceComposer from '@/components/SpaceComposer';
-import Link from 'next/link';
+'use client';
+import * as React from 'react';
 
-export const dynamic = 'force-dynamic';
+type SpaceConfigResponse = { space?: { id?: string } | null };
+type Post = { id: string; body: string; createdAt: string };
+type PostsResponse = { posts?: Post[] };
 
-async function getSpace(slug: string) {
-  return prisma.space.findUnique({
-    where: { slug },
-    select: { id: true, slug: true, name: true, description: true, createdAt: true },
-  });
-}
+export default function SpaceFeedPage({ params }: { params: { slug: string } }) {
+  const [posts, setPosts] = React.useState<Post[]>([]);
+  const [spaceId, setSpaceId] = React.useState<string | null>(null);
 
-export default async function SpacePage({ params }: { params: { slug: string } }) {
-  const space = await getSpace(params.slug);
-  if (!space) return <div className="p-6">Space not found.</div>;
+  React.useEffect(() => {
+    let isMounted = true;
 
-  const profileId = await getCurrentProfileId();
-  const joined = profileId
-    ? !!(await prisma.spaceMembership.findUnique({
-        where: { spaceId_profileId: { spaceId: space.id, profileId } },
-        select: { id: true },
-      }))
-    : false;
+    (async () => {
+      try {
+        const cfgRes = await fetch(`/api/spaces/${params.slug}/config`);
+        if (!cfgRes.ok) return;
+        const cfg = (await cfgRes.json()) as SpaceConfigResponse;
+        const id = cfg.space?.id ?? null;
+        if (!isMounted) return;
+        setSpaceId(id);
+        if (!id) return;
 
-  // You can keep using the API for the first page, or query Prisma directly.
-  const base = process.env.NEXT_PUBLIC_SITE_URL || '';
-  const res = await fetch(`${base}/api/spaces/${space.slug}/posts?limit=20`, { cache: 'no-store' });
-  const data = await res.json();
+        const postsRes = await fetch(`/api/posts?spaceId=${id}`);
+        if (!postsRes.ok) {
+          if (isMounted) setPosts([]);
+          return;
+        }
+
+        const data = (await postsRes.json()) as PostsResponse;
+        if (isMounted) setPosts(data.posts ?? []);
+      } catch (error) {
+        if (isMounted) {
+          setSpaceId(null);
+          setPosts([]);
+        }
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [params.slug]);
 
   return (
-    <main className="container mx-auto px-4 py-6 grid grid-cols-12 gap-6">
-      <section className="col-span-8">
-        <header className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-2xl font-semibold">{space.name}</h1>
-            {space.description && <p className="text-sm text-zinc-600">{space.description}</p>}
+    <main className="space-y-4">
+      {!spaceId ? <p className="text-sm text-gray-500">Loading…</p> : null}
+      {posts.map((post) => (
+        <article key={post.id} className="rounded border p-3">
+          <p className="whitespace-pre-wrap text-sm">{post.body}</p>
+          <div className="text-xs text-gray-500 mt-1">
+            {new Date(post.createdAt).toLocaleString()}
           </div>
-          <SpaceJoinButton slug={space.slug} initialJoined={joined} />
-        </header>
-
-        {/* Scoped composer (posting requires membership via API) */}
-        <SpaceComposer spaceSlug={space.slug} />
-
-        <ul className="space-y-4">
-          {data.posts?.map((p: any) => (
-            <li key={p.id} className="rounded-md border p-4">
-              <div className="text-sm text-zinc-500">{new Date(p.createdAt).toLocaleString()}</div>
-              <div className="font-medium">@{p.profile?.handle}</div>
-              <p className="whitespace-pre-wrap">{p.body}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <aside className="col-span-4">
-        <div className="rounded-md border p-4">
-          <h2 className="font-medium mb-2">About this Space</h2>
-          <p className="text-sm text-zinc-600">
-            Created {new Date(space.createdAt).toLocaleDateString()}
-          </p>
-          <Link className="text-sm text-teal-700" href="/">Back to Home</Link>
-        </div>
-      </aside>
+        </article>
+      ))}
+      {spaceId && posts.length === 0 ? (
+        <p className="text-sm text-gray-500">No posts yet.</p>
+      ) : null}
     </main>
   );
 }

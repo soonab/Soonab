@@ -1,5 +1,11 @@
 // src/lib/media.ts
 
+const publicBaseUrl = process.env.S3_PUBLIC_BASE_URL ?? '';
+
+export function mediaUrlFromKey(key: string): string {
+  return publicBaseUrl ? `${publicBaseUrl}/${key}` : key;
+}
+
 export type VariantRecord = {
   id: string;
   variants: {
@@ -21,7 +27,6 @@ export type SerializedAttachment = {
 };
 
 export function serializeAttachments(records: VariantRecord[], order?: string[]): SerializedAttachment[] {
-  const base = process.env.S3_PUBLIC_BASE_URL ?? '';
   const map = new Map(records.map((r) => [r.id, r]));
   const seen = new Set<string>();
   const sequence = order && order.length ? order : records.map((r) => r.id);
@@ -34,7 +39,7 @@ export function serializeAttachments(records: VariantRecord[], order?: string[])
       ...record.variants.map((v) => ({
         mediaId: record.id,
         role: v.role,
-        url: base ? `${base}/${v.key}` : v.key,
+        url: mediaUrlFromKey(v.key),
         width: v.width,
         height: v.height,
         contentType: v.contentType,
@@ -49,7 +54,7 @@ export function serializeAttachments(records: VariantRecord[], order?: string[])
       ...record.variants.map((v) => ({
         mediaId: record.id,
         role: v.role,
-        url: base ? `${base}/${v.key}` : v.key,
+        url: mediaUrlFromKey(v.key),
         width: v.width,
         height: v.height,
         contentType: v.contentType,

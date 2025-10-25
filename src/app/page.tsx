@@ -15,7 +15,7 @@ import AddToCollection from '@/components/collections/AddToCollection';
 import ShareMenu from '@/components/share/ShareMenu';
 import { getAuthedUserId } from '@/lib/auth';
 import { SITE } from '@/lib/site';
-import { serializeAttachments } from '@/lib/media';
+import { serializeAttachments, mediaUrlFromKey, type VariantRecord } from '@/lib/media';
 import { cookies } from 'next/headers';
 
 /** Convert Bayesian mean (0..5) to percent (0..100) with one decimal. */
@@ -112,18 +112,20 @@ export default async function Home() {
           const initialMean = sc?.bayesianMean ?? null;
           const initialPercent = meanToPercent(initialMean);
 
-          const attachments = serializeAttachments(
-            p.media.map((link) => ({
-              id: link.mediaId,
-              variants: link.media.variants.map((v) => ({
-                role: v.role,
-                key: v.key,
-                width: v.width,
-                height: v.height,
-                contentType: v.contentType,
-              })),
-            }))
-          );
+          const mediaRecords: VariantRecord[] = p.media.map((link) => ({
+            id: link.mediaId,
+            variants: link.media.variants.map((v) => ({
+              role: v.role,
+              key: v.key,
+              width: v.width,
+              height: v.height,
+              contentType: v.contentType,
+            })),
+          }));
+          const attachments = serializeAttachments(mediaRecords);
+          const firstVariant = mediaRecords[0]?.variants?.find((v) => v.role === 'ORIGINAL')
+            ?? mediaRecords[0]?.variants?.[0];
+          const downloadUrl = firstVariant ? mediaUrlFromKey(firstVariant.key) : undefined;
 
           return (
             <li key={p.id} className="feed-card">
@@ -137,7 +139,7 @@ export default async function Home() {
                   initialMean={initialMean}
                 />
                 <div className="ml-auto">
-                  <ShareMenu path={`/p/${p.id}`} title={p.body?.slice(0, 120)} />
+                  <ShareMenu path={`/p/${p.id}`} title={p.body?.slice(0, 120)} downloadUrl={downloadUrl} />
                 </div>
               </div>
 

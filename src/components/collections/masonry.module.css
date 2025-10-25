@@ -1,0 +1,30 @@
+.masonry {
+  column-gap: 1.25rem;
+  column-fill: balance;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.masonryItem {
+  break-inside: avoid;
+  margin-bottom: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .masonry {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .masonry {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1440px) {
+  .masonry {
+    column-count: 4;
+  }
+}

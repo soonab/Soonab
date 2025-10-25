@@ -12,6 +12,7 @@ import RateReplyStars from '@/components/reputation/RateReplyStars';
 import LoginCtaCard from '@/components/LoginCtaCard';
 import { AttachmentGrid } from '@/components/media/AttachmentGrid';
 import AddToCollection from '@/components/collections/AddToCollection';
+import ShareMenu from '@/components/share/ShareMenu';
 import { getAuthedUserId } from '@/lib/auth';
 import { SITE } from '@/lib/site';
 import { serializeAttachments } from '@/lib/media';
@@ -135,6 +136,9 @@ export default async function Home() {
                   initialPercent={initialPercent}
                   initialMean={initialMean}
                 />
+                <div className="ml-auto">
+                  <ShareMenu path={`/p/${p.id}`} title={p.body?.slice(0, 120)} />
+                </div>
               </div>
 
               <BodyText text={p.body} />
@@ -178,6 +182,13 @@ export default async function Home() {
                           <ScoreBadge bm={rs?.bayesianMean} count={rs?.count} />
                           {/* ⭐ Rate the reply */}
                           <RateReplyStars replyId={r.id} initialLocked={rInitialLocked} disabled={rIsOwn} />
+                          <div className="ml-auto">
+                            <ShareMenu
+                              path={`/p/${p.id}#reply-${r.id}`}
+                              title={r.body?.slice(0, 120)}
+                              compact
+                            />
+                          </div>
                         </div>
 
                         <BodyText text={r.body} />

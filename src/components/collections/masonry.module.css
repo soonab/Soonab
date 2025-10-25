@@ -1,30 +1,18 @@
 .masonry {
-  column-gap: 1.25rem;
-  column-fill: balance;
   list-style: none;
-  margin: 0;
   padding: 0;
+  margin: 0;
+  column-gap: 16px;
+  column-fill: balance;
+  column-count: 1;
 }
+@media (min-width: 680px)  { .masonry { column-count: 2; } }
+@media (min-width: 1024px) { .masonry { column-count: 3; } }
+@media (min-width: 1400px) { .masonry { column-count: 4; } }
 
 .masonryItem {
   break-inside: avoid;
-  margin-bottom: 1.25rem;
-}
-
-@media (min-width: 640px) {
-  .masonry {
-    column-count: 2;
-  }
-}
-
-@media (min-width: 1024px) {
-  .masonry {
-    column-count: 3;
-  }
-}
-
-@media (min-width: 1440px) {
-  .masonry {
-    column-count: 4;
-  }
+  margin: 0 0 16px 0;
+  display: block;
+  scroll-margin-top: 80px; /* nicer anchor jump if you have sticky headers */
 }

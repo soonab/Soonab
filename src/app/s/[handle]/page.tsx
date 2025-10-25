@@ -6,6 +6,7 @@ import ReplyComposer from '@/components/ReplyComposer';
 import ReportButton from '@/components/ReportButton';
 import VisibilityBadge from '@/components/VisibilityBadge';
 import RelationshipButtons from '@/components/RelationshipButtons';
+import ProfilePersonalSpaceSection from '@/components/profile/ProfilePersonalSpaceSection';
 import type { Visibility } from '@prisma/client';
 import AddToCollection from '@/components/collections/AddToCollection';
 
@@ -100,6 +101,8 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
             isOwner={isOwner}
           />
         </div>
+
+        <ProfilePersonalSpaceSection handle={profile.handle} />
 
         <ul className="space-y-6">
           {posts.map((p) => (

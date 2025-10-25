@@ -24,6 +24,9 @@ export default function SidebarLeft() {
             <button className="pill">New post</button>
             <button className="pill">My posts</button>
             <button className="pill">Saved</button>
+            <button className="pill" onClick={() => (window.location.href = '/me/collections')}>
+              My collections
+            </button>
           </div>
           <div className="text-xs text-[color:var(--ink-500)] self-center">
             <div>⌘/ — Quick search</div>

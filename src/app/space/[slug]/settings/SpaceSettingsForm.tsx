@@ -3,13 +3,14 @@
 import * as React from 'react';
 import { apiFetch } from '@/lib/csrf-client';
 
-const ALL_BLOCKS = ['about', 'links', 'members', 'gallery', 'pinned'] as const;
+const ALL_BLOCKS = ['about', 'links', 'members', 'gallery', 'pinned', 'rules'] as const;
 type LayoutBlock = (typeof ALL_BLOCKS)[number];
 export type SpaceSettingsConfig = {
   theme: { accent: string; bannerUrl: string; backgroundUrl: string };
   layout: LayoutBlock[];
   links: { label: string; url: string }[];
   visibility: 'PUBLIC' | 'INVITE';
+  rulesText?: string;
 };
 
 type Member = {
@@ -331,6 +332,17 @@ export default function SpaceSettingsForm({ slug, initialConfig }: SpaceSettings
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="rounded border p-4">
+        <h2 className="font-medium mb-3">Rules</h2>
+        <textarea
+          className="textarea textarea-bordered w-full min-h-28"
+          placeholder="What’s expected in this Space…"
+          value={cfg.rulesText || ''}
+          onChange={(e) => setCfg((p) => ({ ...p, rulesText: e.target.value }))}
+        />
+        <p className="text-xs text-gray-500 mt-1">Max 2000 characters. Shown publicly when you add the Rules block.</p>
       </section>
 
       <section className="rounded border p-4">

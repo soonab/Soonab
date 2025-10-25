@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
 import SpaceSettingsForm, { type SpaceSettingsConfig } from './SpaceSettingsForm';
 
-const LAYOUT_BLOCKS = ['about', 'links', 'members', 'gallery', 'pinned'] as const;
+const LAYOUT_BLOCKS = ['about', 'links', 'members', 'gallery', 'pinned', 'rules'] as const;
 type LayoutBlock = (typeof LAYOUT_BLOCKS)[number];
 type SpaceVisibility = 'PUBLIC' | 'INVITE';
 
@@ -32,6 +32,7 @@ const DEFAULT_CONFIG: SpaceSettingsConfig = {
   layout: ['about', 'links', 'members'],
   links: [],
   visibility: 'PUBLIC',
+  rulesText: '',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,6 +86,14 @@ function parseLinks(links: unknown): SpaceSettingsConfig['links'] {
   return result;
 }
 
+function parseRulesText(rulesText: unknown): string {
+  if (typeof rulesText !== 'string') {
+    return '';
+  }
+
+  return rulesText.length > 2000 ? rulesText.slice(0, 2000) : rulesText;
+}
+
 function parseVisibility(visibility: unknown): SpaceVisibility {
   return visibility === 'INVITE' || visibility === 'PUBLIC' ? visibility : DEFAULT_CONFIG.visibility;
 }
@@ -135,6 +144,7 @@ async function loadSpace(slug: string): Promise<LoadedSpace> {
     layout: parseLayout(settings.layout),
     links: parseLinks(settings.links),
     visibility: parseVisibility(record.visibility),
+    rulesText: parseRulesText(settings.rulesText),
   };
 
   return {

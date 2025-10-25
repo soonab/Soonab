@@ -164,6 +164,7 @@ class ZNumber implements BaseSchema<number> {
 
 class ZArray<T> implements BaseSchema<T[]> {
   private maxLength: number | null = null;
+  private minLength: number | null = null;
 
   constructor(private readonly inner: BaseSchema<T>) {}
 
@@ -172,9 +173,17 @@ class ZArray<T> implements BaseSchema<T[]> {
     return this;
   }
 
+  min(length: number) {
+    this.minLength = length;
+    return this;
+  }
+
   parse(input: unknown): T[] {
     if (!Array.isArray(input)) {
       throw new Error('Expected array');
+    }
+    if (this.minLength !== null && input.length < this.minLength) {
+      throw new Error(`Array must contain at least ${this.minLength} element(s)`);
     }
     if (this.maxLength !== null && input.length > this.maxLength) {
       throw new Error(`Array must contain at most ${this.maxLength} element(s)`);

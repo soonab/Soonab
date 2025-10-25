@@ -8,7 +8,7 @@ const db = prisma as any;
 
 const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{6})$/;
 const HTTP_URL_REGEX = /^https?:\/\/[^\s]+$/i;
-const BLOCK_VALUES = ['about', 'links', 'members', 'gallery', 'pinned'] as const;
+const BLOCK_VALUES = ['about', 'links', 'members', 'gallery', 'pinned', 'rules'] as const;
 const SPACE_VISIBILITY_VALUES = ['PUBLIC', 'INVITE'] as const;
 
 type Block = (typeof BLOCK_VALUES)[number];
@@ -27,6 +27,7 @@ type SpaceConfig = {
   layout: Block[];
   links: Link[];
   visibility: SpaceVisibility;
+  rulesText: string;
 };
 
 type RawSpaceSettings = Record<string, unknown>;
@@ -34,6 +35,7 @@ type PersistedSpaceSettings = {
   theme: Theme;
   layout: Block[];
   links: Link[];
+  rulesText: string;
 };
 
 const UrlFieldSchema = z
@@ -54,11 +56,14 @@ const LinkSchema = z.object({
   url: z.string().refine((value) => HTTP_URL_REGEX.test(value), 'Invalid URL'),
 });
 
+const RulesTextSchema = z.string().max(2000);
+
 const SpaceConfigSchema = z.object({
   theme: ThemeSchema,
-  layout: z.array(BlockSchema).max(8),
+  layout: z.array(BlockSchema).min(1).max(8),
   links: z.array(LinkSchema).max(10).optional(),
   visibility: z.enum(SPACE_VISIBILITY_VALUES),
+  rulesText: RulesTextSchema.optional(),
 });
 
 type ThemeInput = zInfer<typeof ThemeSchema>;
@@ -68,6 +73,7 @@ const DEFAULT_CONFIG: SpaceConfig = {
   layout: ['about', 'links', 'members'],
   links: [],
   visibility: 'PUBLIC',
+  rulesText: '',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +118,11 @@ function normalizeLinks(value: unknown): Link[] {
   return links;
 }
 
+function normalizeRulesText(value: unknown): string {
+  const parsed = RulesTextSchema.safeParse(value);
+  return parsed.success ? parsed.data : '';
+}
+
 function normalizeVisibility(value: unknown): SpaceVisibility {
   return SPACE_VISIBILITY_VALUES.includes(value as SpaceVisibility)
     ? (value as SpaceVisibility)
@@ -124,6 +135,7 @@ function mergeConfig(settings: RawSpaceSettings, visibility: SpaceVisibility): S
     layout: normalizeLayout(settings.layout),
     links: normalizeLinks(settings.links),
     visibility,
+    rulesText: normalizeRulesText(settings.rulesText),
   };
 }
 
@@ -203,6 +215,7 @@ export async function PUT(req: NextRequest, ctx: { params: { slug: string } }) {
     theme: normalizeThemeInput(input.theme),
     layout: input.layout,
     links: input.links ?? [],
+    rulesText: input.rulesText ?? '',
   };
 
   await db.space.update({

@@ -1,95 +1,88 @@
 export const dynamic = 'force-dynamic';
 
-import { headers } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { prisma } from '@/lib/db';
+import { serializeAttachments } from '@/lib/media';
+import CollectionMasonry from '@/components/collections/CollectionMasonry';
+import ShareMenu from '@/components/share/ShareMenu';
 
-import BodyText from '@/components/BodyText';
+export default async function CollectionPage({ params }: { params: { slug: string } }) {
+  const slug = params.slug;
 
-type CollectionEntry = {
-  id: string;
-  addedAt: string;
-  post: {
-    id: string;
-    body: string;
-  };
-};
+  const col = await prisma.collection.findUnique({
+    where: { slug },
+    select: { id: true, title: true, visibility: true, createdAt: true, owner: { select: { handle: true } } },
+  });
+  if (!col) {
+    return (
+      <section className="panel p-6">
+        <h1 className="text-xl font-bold mb-2">Collection not found</h1>
+        <p className="text-[14px] text-[color:var(--ink-700)]">The collection you’re looking for does not exist.</p>
+      </section>
+    );
+  }
 
-interface CollectionResponse {
-  collection: {
-    title: string;
-    slug: string;
-    counts: {
-      total: number;
-      visible: number;
-      hidden: number;
-    };
-    entries: CollectionEntry[];
-  };
-}
-
-async function getOrigin(): Promise<string> {
-  const hdrs = await headers();
-  const host = hdrs.get('x-forwarded-host') ?? hdrs.get('host');
-  const proto = hdrs.get('x-forwarded-proto') ?? 'http';
-  if (host) return `${proto}://${host}`;
-  return process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
-}
-
-async function fetchCollection(slug: string): Promise<CollectionResponse | null> {
-  const origin = await getOrigin();
-  const res = await fetch(`${origin}/api/collections/${encodeURIComponent(slug)}`, {
-    cache: 'no-store',
-    headers: { Accept: 'application/json' },
+  const rows = await prisma.collectionEntry.findMany({
+    where: { collectionId: col.id },
+    orderBy: [{ addedAt: 'desc' }, { id: 'desc' }],
+    take: 24,
+    select: {
+      id: true,
+      addedAt: true,
+      post: {
+        select: {
+          id: true,
+          body: true,
+          createdAt: true,
+          visibility: true,
+          state: true,
+          media: { include: { media: { include: { variants: true } } } },
+        },
+      },
+    },
   });
 
-  if (res.status === 404) {
-    return null;
-  }
-  if (!res.ok) {
-    throw new Error('Failed to load collection');
-  }
-
-  return (await res.json()) as CollectionResponse;
-}
-
-export default async function CollectionPage({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
-  const { slug } = await params;
-  const decodedSlug = decodeURIComponent(slug);
-  const data = await fetchCollection(decodedSlug);
-
-  if (!data) {
-    notFound();
-  }
-
-  const { collection } = data;
+  const items = rows.map((r) => {
+    const p = r.post;
+    const hidden = !(p.state === 'ACTIVE' && p.visibility === 'PUBLIC');
+    const attachments = hidden
+      ? []
+      : serializeAttachments(
+          p.media.map((link) => ({
+            id: link.mediaId,
+            variants: link.media.variants.map((v) => ({
+              role: v.role, key: v.key, width: v.width, height: v.height, contentType: v.contentType,
+            })),
+          }))
+        );
+    return {
+      id: r.id,
+      addedAt: r.addedAt.toISOString(),
+      postId: p.id,
+      createdAt: p.createdAt.toISOString(),
+      hidden,
+      body: hidden ? '' : p.body,
+      attachments,
+    };
+  });
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 px-4 py-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">{collection.title}</h1>
-        <p className="text-sm opacity-70">
-          {collection.counts.visible} items
-        </p>
-      </header>
+    <section className="space-y-4">
+      <div className="panel p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold truncate">{col.title}</h1>
+            <div className="text-[12px] text-[color:var(--ink-600)]">
+              {col.visibility} · by <a className="underline" href={`/s/${col.owner?.handle ?? 'anon'}`}>@{col.owner?.handle ?? 'anon'}</a> ·{' '}
+              {new Date(col.createdAt).toISOString().slice(0, 10)}
+            </div>
+          </div>
 
-      {collection.entries.length === 0 ? (
-        <p className="text-sm text-gray-500">No posts in this collection yet.</p>
-      ) : (
-        <ul className="space-y-4">
-          {collection.entries.map((entry) => (
-            <li key={entry.id} className="card space-y-2 p-4">
-              <div className="text-xs opacity-60">
-                Added {new Date(entry.addedAt).toISOString().replace('T', ' ').slice(0, 19)} UTC
-              </div>
-              <BodyText text={entry.post.body} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+          {/* Share entire collection */}
+          <ShareMenu path={`/c/${encodeURIComponent(slug)}`} title={col.title} />
+        </div>
+      </div>
+
+      <CollectionMasonry slug={slug} initialItems={items} />
+    </section>
   );
 }

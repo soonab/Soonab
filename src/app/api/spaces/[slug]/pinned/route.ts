@@ -43,7 +43,7 @@ export async function GET(_req: NextRequest, ctx: { params: { slug: string } }) 
   });
   if (!space) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  // If your Post table has a "state" column, you can add:
+  // If your Post table has a "state" column, you can add this line to the WHERE:
   //   AND p.state = 'ACTIVE'
   const rows = await prisma.$queryRaw<PinnedPostRow[]>`
     SELECT sp."postId", p.body, p."createdAt", sp.position

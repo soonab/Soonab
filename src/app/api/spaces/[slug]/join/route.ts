@@ -1,30 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
+
 import { prisma } from '@/lib/db';
-import { getCurrentProfileId } from '@/lib/auth';
 import { assertSameOrigin, requireCsrf } from '@/lib/security';
+import { getCurrentProfileId } from '@/lib/auth';
+import crypto from 'crypto';
 
-export async function POST(
-  req: NextRequest,
-  context: { params: Promise<{ slug: string }> }
-) {
-  const { slug } = await context.params;
+export async function POST(req: NextRequest, ctx: { params: { slug: string } }) {
+  await assertSameOrigin(req);
+  await requireCsrf(req);
 
-  const so = assertSameOrigin(req);
-  if (so) return so;
-  const cs = requireCsrf(req);
-  if (cs) return cs;
+  const me = await getCurrentProfileId();
+  if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const profileId = await getCurrentProfileId();
-  if (!profileId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-
-  const space = await prisma.space.findUnique({ where: { slug }, select: { id: true } });
-  if (!space) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-
-  await prisma.spaceMembership.upsert({
-    where: { spaceId_profileId: { spaceId: space.id, profileId } },
-    update: {},
-    create: { spaceId: space.id, profileId, role: 'MEMBER' },
+  const space = await prisma.space.findUnique({
+    where: { slug: ctx.params.slug },
+    select: { id: true, visibility: true },
   });
+  if (!space) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  if (space.visibility !== 'PUBLIC') {
+    return NextResponse.json({ error: 'Invite required' }, { status: 403 });
+  }
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO "SpaceMembership" ("id","spaceId","profileId","role","createdAt")
+     VALUES ($1,$2,$3,'MEMBER',NOW())
+     ON CONFLICT ("spaceId","profileId") DO NOTHING`,
+    crypto.randomUUID(),
+    space.id,
+    me,
+  );
 
   return NextResponse.json({ ok: true });
 }

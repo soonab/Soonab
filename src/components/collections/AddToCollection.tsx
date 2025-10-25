@@ -1,13 +1,9 @@
+// UPDATE: choose existing, or create & add; SSR-safe headers
 'use client';
 
 import * as React from 'react';
 
-type CollectionRow = {
-  slug: string;
-  title: string;
-  visibility: 'PUBLIC' | 'PRIVATE';
-  _count?: { entries: number };
-};
+type CollectionRow = { slug: string; title: string; visibility: 'PUBLIC' | 'PRIVATE'; _count?: { entries: number } };
 
 function getCsrfHeaders() {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -21,133 +17,70 @@ function getCsrfHeaders() {
 
 export default function AddToCollection({ postId }: { postId: string }) {
   const [open, setOpen] = React.useState(false);
-
-  // list / selection
   const [loading, setLoading] = React.useState(false);
   const [collections, setCollections] = React.useState<CollectionRow[]>([]);
   const [selectedSlug, setSelectedSlug] = React.useState<string | null>(null);
-
-  // create mode
   const [mode, setMode] = React.useState<'choose' | 'create'>('choose');
   const [title, setTitle] = React.useState('');
   const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
-
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState<string | null>(null);
 
   async function loadCollections() {
-    setLoading(true);
-    setMsg(null);
+    setLoading(true); setMsg(null);
     try {
       const res = await fetch('/api/collections?owner=me', { credentials: 'include', cache: 'no-store' });
-      if (!res.ok) throw new Error(`Load failed (${res.status})`);
       const j = await res.json();
       const rows: CollectionRow[] = j.items ?? j.collections ?? [];
       setCollections(rows);
-      // default select first
-      if (rows.length && !selectedSlug) setSelectedSlug(rows[0]!.slug);
-      // if none, go to create mode
-      if (!rows.length) setMode('create');
-    } catch (e: any) {
-      setMsg(e.message || 'Error loading collections');
-    } finally {
-      setLoading(false);
-    }
+      if (rows.length) { setSelectedSlug(rows[0]!.slug); setMode('choose'); }
+      else { setMode('create'); }
+    } catch (e: any) { setMsg(e.message || 'Error loading collections'); }
+    finally { setLoading(false); }
   }
 
-  function onOpen() {
-    setOpen(true);
-    // reset transient state
-    setMsg(null);
-    setBusy(false);
-    // always refresh so the list is up-to-date
-    loadCollections();
-  }
+  function onOpen() { setOpen(true); setMsg(null); setBusy(false); loadCollections(); }
+  function onClose() { setOpen(false); setMsg(null); setBusy(false); }
 
-  function onClose() {
-    setOpen(false);
-    // keep list in memory but clear transient errors
-    setMsg(null);
-    setBusy(false);
-  }
-
-  async function createAndMaybeAdd({ alsoAdd }: { alsoAdd: boolean }) {
-    if (!title.trim()) {
-      setMsg('Please enter a title');
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
+  async function createAndMaybeAdd(alsoAdd: boolean) {
+    if (!title.trim()) { setMsg('Please enter a title'); return; }
+    setBusy(true); setMsg(null);
     try {
       const res = await fetch('/api/collections', {
-        method: 'POST',
-        credentials: 'include',
-        headers: getCsrfHeaders(),
+        method: 'POST', credentials: 'include', headers: getCsrfHeaders(),
         body: JSON.stringify({ title: title.trim(), visibility: visibility.toLowerCase() }),
       });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({} as any));
-        throw new Error(j.error || `Create failed (${res.status})`);
-      }
-      const j = await res.json().catch(() => ({} as any));
-      const col: CollectionRow = j.collection ?? j.item ?? j ?? null;
+      if (!res.ok) throw new Error((await res.json().catch(() => ({} as any))).error || `Create failed (${res.status})`);
+      const j = await res.json();
+      const col: CollectionRow = j.collection ?? j.item ?? j;
       setTitle('');
-      // reload list so it shows up
       await loadCollections();
-      if (col?.slug) setSelectedSlug(col.slug);
-      if (alsoAdd && col?.slug) {
-        await addTo(col.slug);
-      } else {
-        setMode('choose');
-        setMsg('Collection created');
-      }
-    } catch (e: any) {
-      setMsg(e.message || 'Error creating collection');
-    } finally {
-      setBusy(false);
-    }
+      if (alsoAdd && col?.slug) await addTo(col.slug);
+      else { setMode('choose'); setMsg('Collection created'); }
+    } catch (e: any) { setMsg(e.message || 'Error creating collection'); }
+    finally { setBusy(false); }
   }
 
   async function addTo(slug: string) {
     if (!slug) return;
-    setBusy(true);
-    setMsg(null);
+    setBusy(true); setMsg(null);
     try {
       const res = await fetch(`/api/collections/${encodeURIComponent(slug)}/entries`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: getCsrfHeaders(),
-        body: JSON.stringify({ postId }),
+        method: 'POST', credentials: 'include', headers: getCsrfHeaders(), body: JSON.stringify({ postId }),
       });
-      if (res.status === 409) { // already exists
-        setMsg('Already in this collection');
-        setTimeout(() => setMsg(null), 1200);
-        return;
-      }
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({} as any));
-        throw new Error(j.error || `Add failed (${res.status})`);
-      }
-      setMsg('Added!');
-      // gentle auto-close
-      setTimeout(() => { setMsg(null); onClose(); }, 700);
-    } catch (e: any) {
-      setMsg(e.message || 'Error adding to collection');
-    } finally {
-      setBusy(false);
-    }
+      if (res.status === 409) { setMsg('Already in this collection'); setTimeout(() => setMsg(null), 1200); return; }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({} as any))).error || `Add failed (${res.status})`);
+      setMsg('Added!'); setTimeout(() => { setMsg(null); onClose(); }, 700);
+    } catch (e: any) { setMsg(e.message || 'Error adding'); }
+    finally { setBusy(false); }
   }
 
   return (
     <>
       <button className="underline text-xs" onClick={onOpen}>Add to Collection...</button>
-
       {!open ? null : (
         <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/30 p-3" onClick={onClose}>
-          <div
-            className="panel max-w-[520px] w-full mt-16 p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="panel max-w-[520px] w-full mt-16 p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-semibold">Add to Collection</h3>
               <button className="text-xs underline" onClick={onClose}>Close</button>
@@ -160,18 +93,12 @@ export default function AddToCollection({ postId }: { postId: string }) {
                 <p className="text-[13px] text-[color:var(--ink-700)]">
                   Choose a collection, or <button className="underline" onClick={() => setMode('create')}>create a new one</button>.
                 </p>
-
                 <div className="max-h-56 overflow-auto rounded border">
                   <ul className="divide-y">
                     {collections.map((c) => (
                       <li key={c.slug} className="flex items-center gap-3 p-2">
-                        <input
-                          type="radio"
-                          name="collection"
-                          className="accent-[color:var(--brand-teal)]"
-                          checked={selectedSlug === c.slug}
-                          onChange={() => setSelectedSlug(c.slug)}
-                        />
+                        <input type="radio" name="collection" className="accent-[color:var(--brand-teal)]"
+                               checked={selectedSlug === c.slug} onChange={() => setSelectedSlug(c.slug)} />
                         <div className="flex-1">
                           <div className="font-medium">{c.title}</div>
                           <div className="text-[11px] text-[color:var(--ink-600)]">
@@ -183,20 +110,15 @@ export default function AddToCollection({ postId }: { postId: string }) {
                     ))}
                   </ul>
                 </div>
-
                 <div className="flex items-center justify-end gap-2">
                   <button className="pill" onClick={onClose}>Cancel</button>
-                  <button
-                    className="pill-primary"
-                    disabled={!selectedSlug || busy}
-                    onClick={() => selectedSlug && addTo(selectedSlug)}
-                  >
+                  <button className="pill-primary" disabled={!selectedSlug || busy}
+                          onClick={() => selectedSlug && addTo(selectedSlug)}>
                     {busy ? 'Adding…' : 'Add'}
                   </button>
                 </div>
               </div>
             ) : (
-              // CREATE
               <div className="space-y-3">
                 <p className="text-[13px] text-[color:var(--ink-700)]">
                   {collections.length === 0
@@ -206,22 +128,12 @@ export default function AddToCollection({ postId }: { postId: string }) {
 
                 <div className="space-y-2">
                   <label className="block text-xs font-medium">Title</label>
-                  <input
-                    className="input"
-                    placeholder="e.g. Favorite Recipes"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    maxLength={128}
-                  />
+                  <input className="input" placeholder="e.g. Favorite Recipes" value={title}
+                         onChange={(e) => setTitle(e.target.value)} maxLength={128} />
                 </div>
-
                 <div className="space-y-2">
                   <label className="block text-xs font-medium">Visibility</label>
-                  <select
-                    className="input"
-                    value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as any)}
-                  >
+                  <select className="input" value={visibility} onChange={(e) => setVisibility(e.target.value as any)}>
                     <option value="PUBLIC">Public (anyone can see)</option>
                     <option value="PRIVATE">Private (only you)</option>
                   </select>
@@ -229,25 +141,14 @@ export default function AddToCollection({ postId }: { postId: string }) {
 
                 <div className="flex items-center justify-between">
                   {collections.length > 0 ? (
-                    <button className="text-xs underline" onClick={() => setMode('choose')}>
-                      Back to list
-                    </button>
+                    <button className="text-xs underline" onClick={() => setMode('choose')}>Back to list</button>
                   ) : <span />}
-
                   <div className="flex items-center gap-2">
                     <button className="pill" onClick={onClose}>Cancel</button>
-                    <button
-                      className="pill"
-                      disabled={busy}
-                      onClick={() => createAndMaybeAdd({ alsoAdd: false })}
-                    >
+                    <button className="pill" disabled={busy} onClick={() => createAndMaybeAdd(false)}>
                       {busy ? 'Working…' : 'Create'}
                     </button>
-                    <button
-                      className="pill-primary"
-                      disabled={busy}
-                      onClick={() => createAndMaybeAdd({ alsoAdd: true })}
-                    >
+                    <button className="pill-primary" disabled={busy} onClick={() => createAndMaybeAdd(true)}>
                       {busy ? 'Working…' : 'Create & Add'}
                     </button>
                   </div>

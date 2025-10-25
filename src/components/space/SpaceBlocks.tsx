@@ -4,9 +4,10 @@ import * as React from 'react';
 type Space = { id: string; slug: string; name: string; description?: string | null };
 type Config = {
   theme: { accent: string; bannerUrl?: string; backgroundUrl?: string };
-  layout: ('about'|'links'|'members'|'gallery'|'pinned')[];
+  layout: ('about'|'links'|'members'|'gallery'|'pinned'|'rules')[];
   links: { label: string; url: string }[];
   visibility: 'PUBLIC'|'INVITE';
+  rulesText?: string;
 };
 
 export default function SpaceBlocks({ space, config }: { space: Space; config: Config }) {
@@ -54,6 +55,14 @@ export default function SpaceBlocks({ space, config }: { space: Space; config: C
         <div key="gallery" className="rounded border p-4">
           <h3 className="font-medium mb-2">Latest activity</h3>
           <p className="text-sm text-gray-600">Your Space’s feed appears below — newest first.</p>
+        </div>
+      );
+    }
+    if (b === 'rules') {
+      return (
+        <div key="rules" className="rounded border p-4">
+          <h3 className="font-medium mb-2">Rules</h3>
+          <p className="text-sm text-gray-700 whitespace-pre-wrap">{config.rulesText || 'No rules set yet.'}</p>
         </div>
       );
     }

@@ -101,7 +101,13 @@ function applySettings(settings: SpaceSettings, visibility: Visibility): SpaceCo
   return nextConfig;
 }
 
-async function getSpace(slug: string) {
+type SpaceData = {
+  space: SpacePreview;
+  config: SpaceConfig;
+  memberCount: number;
+};
+
+async function getSpace(slug: string): Promise<SpaceData | null> {
   const record = await prisma.space.findUnique({
     where: { slug },
     select: {
@@ -124,8 +130,9 @@ async function getSpace(slug: string) {
     name: record.name,
     description: record.description,
   };
+  const memberCount = await prisma.spaceMembership.count({ where: { spaceId: record.id } });
 
-  return { space, config };
+  return { space, config, memberCount };
 }
 
 export default async function SpaceLayout({
@@ -139,7 +146,7 @@ export default async function SpaceLayout({
 
   if (!data) return <>{children}</>;
 
-  const { space, config } = data;
+  const { space, config, memberCount } = data;
   const accent = config.theme.accent;
 
   return (
@@ -164,6 +171,9 @@ export default async function SpaceLayout({
                 {config.visibility === 'INVITE' ? (
                   <span className="rounded-full border px-2 py-1 text-xs text-gray-700">Friend Space — unlimited posts</span>
                 ) : null}
+                <span className="text-xs text-gray-500">
+                  {memberCount} member{memberCount === 1 ? '' : 's'}
+                </span>
                 <JoinSpaceButton slug={space.slug} />
               </div>
             </div>

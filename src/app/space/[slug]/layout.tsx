@@ -2,6 +2,7 @@ import Image from 'next/image';
 import type { ReactNode } from 'react';
 import type { Prisma, SpaceVisibility } from '@prisma/client';
 
+import DiscoverSpacesCard from '@/components/discover/DiscoverSpacesCard';
 import SpaceBlocks from '@/components/space/SpaceBlocks';
 import JoinSpaceButton from '@/components/space/JoinSpaceButton';
 import { prisma } from '@/lib/db';
@@ -182,7 +183,12 @@ export default async function SpaceLayout({
       </header>
 
       <section className="mx-auto mt-6 max-w-4xl px-4">
-        <SpaceBlocks space={space} config={config} />
+        <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
+          <SpaceBlocks space={space} config={config} />
+          <div className="space-y-4">
+            <DiscoverSpacesCard />
+          </div>
+        </div>
       </section>
 
       <div className="mx-auto mt-8 max-w-4xl px-4">{children}</div>

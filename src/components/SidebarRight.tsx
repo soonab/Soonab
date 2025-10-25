@@ -3,32 +3,10 @@ import * as React from 'react';
 
 import DiscoverSpacesCard from '@/components/discover/DiscoverSpacesCard';
 
-export default function SidebarRight() {
+export default function SidebarRight(): React.ReactElement {
   return (
-    <div className="rail">
-      {/* Explore Trends */}
-      <div className="panel p-4">
-        <h3 className="mb-2 font-semibold">Explore Trends</h3>
-        <div className="trends-list">
-          <div className="trend">#soonab</div><div className="count">1,680</div>
-          <div className="trend">#glassUI</div><div className="count">892</div>
-          <div className="trend">#chronological</div><div className="count">451</div>
-        </div>
-      </div>
-
+    <div className="space-y-4">
       <DiscoverSpacesCard />
-
-      {/* Featured Spaces */}
-      <div className="panel p-4">
-        <h3 className="mb-2 font-semibold">Featured Spaces</h3>
-        <div className="flex flex-wrap gap-8">
-          <div className="flex flex-wrap gap-8">
-            <a className="pill" href="/space/futuretech">#futuretech</a>
-            <a className="pill" href="/space/design">#design</a>
-            <a className="pill" href="/space/photography">#photography</a>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

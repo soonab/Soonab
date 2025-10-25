@@ -1,102 +1,167 @@
-# Test Pack
-
-## Step-11
-
-```bash
-# Create posts (keep cookie jar for session reuse)
+# Base config
 BASE_URL="http://localhost:3000"
-COOKIE_JAR="/tmp/alinkah-cookies.txt"
+CJ="/tmp/alinkah.jar"
 
-curl -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -H 'Content-Type: application/json' \
-  -d '{"body":"First public post #alinkah"}' \
-  "$BASE_URL/api/posts"
+# If you need to seed the cookie jar, hit your login route via UI or a test helper.
+# All curls below reuse (-b) and write (-c) the same jar.
 
-curl -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -H 'Content-Type: application/json' \
-  -d '{"body":"Second public update #alinkah"}' \
-  "$BASE_URL/api/posts"
+# Helper: extract CSRF from cookie jar (supports common names)
+csrf () {
+  local tok
+  tok=$(awk '$6 ~ /^(csrf|csrfToken|XSRF-TOKEN)$/{print $7}' "$CJ" 2>/dev/null | tail -n 1)
+  printf "%s" "$tok"
+}
 
-curl -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -H 'Content-Type: application/json' \
-  -d '{"body":"Followers only #alinkah","visibility":"FOLLOWERS"}' \
-  "$BASE_URL/api/posts"
+*# Create two public posts
+curl -s -c "$CJ" -b "$CJ" -H 'Content-Type: application/json' \
+  -X POST "$BASE_URL/api/posts" \
+  -d '{"body":"First public post #alinkah"}'
 
-# Verify public tag feed (only the two public posts, newest first)
-curl "$BASE_URL/api/tags/alinkah"
+curl -s -c "$CJ" -b "$CJ" -H 'Content-Type: application/json' \
+  -X POST "$BASE_URL/api/posts" \
+  -d '{"body":"Second public update #alinkah"}'
 
-# Tag search matches only the same public posts
-curl "$BASE_URL/api/search?q=%23alinkah"
+# Followers-only (if supported in your build)
+curl -s -c "$CJ" -b "$CJ" -H 'Content-Type: application/json' \
+  -X POST "$BASE_URL/api/posts" \
+  -d '{"body":"Followers only #alinkah","visibility":"FOLLOWERS"}'
 
-# Plain-text search respects visibility
-curl "$BASE_URL/api/search?q=public"
-```
+# Verify tag feed is public-only, newest-first
+curl -s "$BASE_URL/api/tags/alinkah" | jq .
 
-## DM v1
+# Search respects visibility
 
-```bash
-# (after auth; reuse session cookie A.txt/B.txt from existing pack)
+SPACE_SLUG="<SPACE_SLUG>"             # e.g. "nic-space"
+TOK="$(csrf)"
 
-# Create a conversation (A → B by handle)
-curl -i -s -X POST http://localhost:3000/api/dm/conversations \
-  -H 'Content-Type: application/json' -d '{"targetHandle":"TARGET_HANDLE"}' -c A.txt -b A.txt | head -n 1
+# Read config
+curl -s "$BASE_URL/api/spaces/$SPACE_SLUG/config" | jq .
 
-# Accept as B
-CONV_ID="<paste from previous response or GET list>"
-curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/accept -c B.txt -b B.txt | head -n 1
+# Update theme + layout (owner/mod only)
+curl -s -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X PUT "$BASE_URL/api/spaces/$SPACE_SLUG/config" \
+  -d '{"theme":{"accent":"#2F7A7B"},"layout":["about","links","pinned","members"],"links":[{"label":"Website","url":"https://example.com"}],"visibility":"PUBLIC"}' \
+  | jq .
 
-# Send messages both ways
-curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/messages \
-  -H 'Content-Type: application/json' -d '{"body":"hey there"}' -c A.txt -b A.txt | head -n 1
-curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/messages \
-  -H 'Content-Type: application/json' -d '{"body":"hi!"}' -c B.txt -b B.txt | head -n 1
+TOK="$(csrf)"
 
-# Abuse path (expect 429 after bursts)
-for i in {1..20}; do
-  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:3000/api/dm/$CONV_ID/messages \
-    -H 'Content-Type: application/json' -d '{"body":"spam"}' -c A.txt -b A.txt
-done | tail -n 1
+# Create invite (owner/mod)
+CREATE=$(curl -s -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/spaces/$SPACE_SLUG/invites" \
+  -d '{"uses":2,"expiresInDays":7}')
+echo "$CREATE" | jq .
 
-# Block as B, then A's send should be forbidden
-curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/block -c B.txt -b B.txt | head -n 1
-curl -i -s -X POST http://localhost:3000/api/dm/$CONV_ID/messages \
-  -H 'Content-Type: application/json' -d '{"body":"still there?"}' -c A.txt -b A.txt | head -n 1
-```
+# Extract token from the link for API accept
+TOKEN=$(echo "$CREATE" | jq -r '.link' | awk -F'/space/invite/' '{print $2}')
+echo "TOKEN=$TOKEN"
 
-## Step-13 — Media uploads
+# Accept invite (as another account/session; switch cookie jar if you want)
+TOK="$(csrf)"
+curl -s -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/spaces/invites/accept" \
+  -d "{\"token\":\"$TOKEN\"}" | jq .
 
-```bash
-# 1) Sign + upload + finalize (requires valid AWS/S3 environment)
-TOK=$(csrf)
-RESP=$(curl -s -X POST http://localhost:3000/api/media/sign \
-  -H "Content-Type: application/json" \
-  -H "x-csrf-token: $TOK" \
+*TOK="$(csrf)"
+
+# Status (returns isMember, role, visibility, spaceId)
+curl -s "$BASE_URL/api/spaces/$SPACE_SLUG/membership" | jq .
+
+# Join PUBLIC spaces (should fail with 403 if INVITE)
+curl -s -c "$CJ" -b "$CJ" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/spaces/$SPACE_SLUG/join" | jq .
+
+# Leave
+curl -s -c "$CJ" -b "$CJ" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/spaces/$SPACE_SLUG/leave" | jq .
+
+# List members (owner/mod only)
+curl -s -c "$CJ" -b "$CJ" "$BASE_URL/api/spaces/$SPACE_SLUG/members" | jq .
+
+# Remove a member (owner/mod or inviter). Replace <PROFILE_ID>.
+PROFILE_ID="<PROFILE_ID>"
+curl -s -c "$CJ" -b "$CJ" -H "X-CSRF-Token: $TOK" \
+  -X DELETE "$BASE_URL/api/spaces/$SPACE_SLUG/members/$PROFILE_ID" | jq .
+**
+TOK="$(csrf)"
+
+# Set a low daily public limit for quick testing (env-based in your app, or assume default 5)
+# Create N public posts to exhaust the quota
+for i in 1 2 3 4 5 6; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -c "$CJ" -b "$CJ" \
+    -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+    -X POST "$BASE_URL/api/posts" \
+    -d "{\"body\":\"public test $i\"}")
+  echo "$i -> $CODE"
+done
+# Expect the last one to be 429 once quota exceeded.
+
+# Now post inside an INVITE space you joined (should be 200 even after quota)
+SPACE_ID=$(curl -s "$BASE_URL/api/spaces/$SPACE_SLUG/config" | jq -r '.space.id')
+curl -s -o /dev/null -w "%{http_code}\n" -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/posts" \
+  -d "{\"body\":\"inside invite space\",\"spaceId\":\"$SPACE_ID\"}"
+# Expect 200
+
+TOK="$(csrf)"
+
+# Create a post in the space (ensure membership)
+SPACE_ID=$(curl -s "$BASE_URL/api/spaces/$SPACE_SLUG/config" | jq -r '.space.id')
+POST_ID=$(curl -s -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/posts" \
+  -d "{\"body\":\"pin me\",\"spaceId\":\"$SPACE_ID\"}" | jq -r '.post.id')
+echo "POST_ID=$POST_ID"
+
+# Pin (owner/mod)
+curl -s -c "$CJ" -b "$CJ" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -X POST "$BASE_URL/api/spaces/$SPACE_SLUG/pinned" \
+  -d "{\"postId\":\"$POST_ID\"}" | jq .
+
+# List
+curl -s "$BASE_URL/api/spaces/$SPACE_SLUG/pinned" | jq .
+
+# Unpin
+curl -s -c "$CJ" -b "$CJ" -H "X-CSRF-Token: $TOK" \
+  -X DELETE "$BASE_URL/api/spaces/$SPACE_SLUG/pinned/$POST_ID" | jq .
+
+# Right-rail/API source
+curl -s "$BASE_URL/api/spaces/suggested?limit=5" | jq .
+
+# Optional: SSR page sanity (should render)
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/discover/spaces"
+
+TOK="$(csrf)"
+
+# Sign
+RESP=$(curl -s -c "$CJ" -b "$CJ" -X POST "$BASE_URL/api/media/sign" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
   -d '{"contentType":"image/png","size":1024,"scope":"post"}')
+echo "$RESP" | jq .
 MEDIA_ID=$(echo "$RESP" | jq -r '.mediaId')
 KEY=$(echo "$RESP" | jq -r '.key')
 URL=$(echo "$RESP" | jq -r '.url')
 
-# PUT the file to $URL, then finalize
-curl -s -X POST http://localhost:3000/api/media/finalize \
-  -H "Content-Type: application/json" \
-  -H "x-csrf-token: $TOK" \
-  -d "{\"mediaId\":\"$MEDIA_ID\",\"key\":\"$KEY\"}"
+# (Do the PUT to $URL outside this script.)
+# Finalize
+curl -s -c "$CJ" -b "$CJ" -X POST "$BASE_URL/api/media/finalize" \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $TOK" \
+  -d "{\"mediaId\":\"$MEDIA_ID\",\"key\":\"$KEY\"}" | jq .
 
-# 2) Create a post with 3 images
-curl -s -X POST http://localhost:3000/api/posts \
-  -H "Content-Type: application/json" \
-  -H "x-csrf-token: $TOK" \
-  -d '{"body":"hello #first","visibility":"PUBLIC","mediaIds":["m1","m2","m3"]}'
+# Reuse A.txt/B.txt if you keep two sessions; otherwise stick to one for a smoke pass.
 
-# 3) Exceed limit → expect 429 after quota used
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:3000/api/posts \
+# Create conversation
+curl -s -c "$CJ" -b "$CJ" -X POST "$BASE_URL/api/dm/conversations" \
   -H "Content-Type: application/json" \
-  -H "x-csrf-token: $TOK" \
-  -d '{"body":"too many","visibility":"PUBLIC","mediaIds":["mA","mB","mC","mD","mE"]}'
+  -d '{"targetHandle":"TARGET_HANDLE"}' | jq .
 
-# 4) DM message with images
-curl -s -X POST http://localhost:3000/api/dm/<cid>/messages \
-  -H "Content-Type: application/json" \
-  -H "x-csrf-token: $TOK" \
-  -d '{"body":"pics","mediaIds":["mA","mB"]}'
-```
+# Then accept/send/etc. as per your DM pack.
+
+
+curl -s "$BASE_URL/api/search?q=%23alinkah" | jq .
+curl -s "$BASE_URL/api/search?q=public" | jq .
+**

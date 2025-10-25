@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SpaceRole } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
 import { assertSameOrigin, requireCsrf } from '@/lib/security';
@@ -24,7 +23,7 @@ export async function POST(
   await prisma.spaceMembership.upsert({
     where: { spaceId_profileId: { spaceId: space.id, profileId } },
     update: {},
-    create: { spaceId: space.id, profileId, role: SpaceRole.MEMBER },
+    create: { spaceId: space.id, profileId, role: 'MEMBER' },
   });
 
   return NextResponse.json({ ok: true });

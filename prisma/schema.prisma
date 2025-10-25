@@ -73,6 +73,7 @@ model Profile {
   spaceInvitesCreated    SpaceInvite[]     @relation("ProfileSpaceInvitesCreated")
   spaceMembershipInvites SpaceMembership[] @relation("SpaceMembershipInvitedBy")
   ownedCollections       Collection[]      @relation("ProfileOwnedCollections")
+  spacePins              SpacePinnedPost[]
   PostRating             PostRating[]
   ReplyRating            ReplyRating[]
 }
@@ -112,9 +113,10 @@ model Post {
   profile Profile? @relation(fields: [profileId], references: [id])
   space   Space?   @relation(fields: [spaceId], references: [id])
 
-  replies Reply[]
-  tags    PostTag[]
-  media   PostMedia[]
+  replies        Reply[]
+  tags           PostTag[]
+  media          PostMedia[]
+  pinnedInSpaces SpacePinnedPost[]
 
   // Collections back-link
   collectionEntries CollectionEntry[]
@@ -466,10 +468,11 @@ model Space {
   visibility  SpaceVisibility @default(PUBLIC)
   isPersonal  Boolean         @default(false)
 
-  createdBy Profile           @relation("ProfileCreatedSpaces", fields: [createdById], references: [id])
-  members   SpaceMembership[]
-  posts     Post[]
-  invites   SpaceInvite[]
+  createdBy   Profile           @relation("ProfileCreatedSpaces", fields: [createdById], references: [id])
+  members     SpaceMembership[]
+  posts       Post[]
+  invites     SpaceInvite[]
+  pinnedPosts SpacePinnedPost[]
 
   @@index([createdAt])
 }
@@ -505,6 +508,21 @@ model SpaceInvite {
   createdBy Profile @relation("ProfileSpaceInvitesCreated", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([spaceId], map: "SpaceInvite_spaceId_idx")
+}
+
+model SpacePinnedPost {
+  spaceId    String
+  postId     String
+  pinnedById String
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  space    Space   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  post     Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pinnedBy Profile @relation(fields: [pinnedById], references: [id], onDelete: Restrict)
+
+  @@id([spaceId, postId])
+  @@index([spaceId, position, createdAt(sort: Desc)], map: "SpacePinnedPost_space_position_idx")
 }
 
 enum SpaceVisibility {

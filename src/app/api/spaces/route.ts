@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { SpaceRole } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getCurrentProfileId } from '@/lib/auth';
 import { assertSameOrigin, requireCsrf, requireJson } from '@/lib/security';
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
       description: input.description,
       slug,
       createdById: profileId,
-      members: { create: { profileId, role: 'owner' } },
+      members: { create: { profileId, role: SpaceRole.OWNER } },
     },
     select: SpaceSummary,
   });

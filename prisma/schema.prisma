@@ -68,11 +68,13 @@ model Profile {
   dmBlocksReceived     DMBlock[]      @relation("DMBlocked")
 
   // Spaces / Collections
-  createdSpaces    Space[]           @relation("ProfileCreatedSpaces")
-  spaceMemberships SpaceMembership[]
-  ownedCollections Collection[]      @relation("ProfileOwnedCollections")
-  PostRating       PostRating[]
-  ReplyRating      ReplyRating[]
+  createdSpaces          Space[]           @relation("ProfileCreatedSpaces")
+  spaceMemberships       SpaceMembership[] @relation("SpaceMembershipProfile")
+  spaceInvitesCreated    SpaceInvite[]     @relation("ProfileSpaceInvitesCreated")
+  spaceMembershipInvites SpaceMembership[] @relation("SpaceMembershipInvitedBy")
+  ownedCollections       Collection[]      @relation("ProfileOwnedCollections")
+  PostRating             PostRating[]
+  ReplyRating            ReplyRating[]
 }
 
 /// ==========================
@@ -454,32 +456,66 @@ model OrgVerification {
 /// Spaces & Collections
 /// ==========================
 model Space {
-  id          String   @id @default(cuid())
-  slug        String   @unique
+  id          String          @id @default(cuid())
+  slug        String          @unique
   name        String
   description String?
   createdById String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime        @default(now())
+  settings    Json            @default("{}")
+  visibility  SpaceVisibility @default(PUBLIC)
+  isPersonal  Boolean         @default(false)
 
   createdBy Profile           @relation("ProfileCreatedSpaces", fields: [createdById], references: [id])
   members   SpaceMembership[]
   posts     Post[]
+  invites   SpaceInvite[]
 
   @@index([createdAt])
 }
 
 model SpaceMembership {
-  id        String   @id @default(cuid())
-  spaceId   String
-  profileId String
-  role      String // 'member' | 'moderator' | 'owner'
-  createdAt DateTime @default(now())
+  id              String    @id @default(cuid())
+  spaceId         String
+  profileId       String
+  role            SpaceRole @default(MEMBER)
+  invitedById     String?
+  joinedViaInvite Boolean   @default(false)
+  createdAt       DateTime  @default(now())
 
-  space   Space   @relation(fields: [spaceId], references: [id])
-  profile Profile @relation(fields: [profileId], references: [id])
+  space     Space    @relation(fields: [spaceId], references: [id])
+  profile   Profile  @relation("SpaceMembershipProfile", fields: [profileId], references: [id])
+  invitedBy Profile? @relation("SpaceMembershipInvitedBy", fields: [invitedById], references: [id])
 
-  @@unique([spaceId, profileId], name: "spaceId_profileId")
+  @@unique([spaceId, profileId], name: "spaceId_profileId", map: "SpaceMembership_spaceId_profileId_key")
   @@index([profileId])
+  @@index([invitedById], map: "SpaceMembership_invitedBy_idx")
+}
+
+model SpaceInvite {
+  id            String    @id @default(cuid())
+  spaceId       String
+  token         String    @unique
+  usesRemaining Int       @default(1)
+  expiresAt     DateTime?
+  createdById   String
+  createdAt     DateTime  @default(now())
+
+  space     Space   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdBy Profile @relation("ProfileSpaceInvitesCreated", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([spaceId], map: "SpaceInvite_spaceId_idx")
+}
+
+enum SpaceVisibility {
+  PUBLIC
+  INVITE
+}
+
+enum SpaceRole {
+  OWNER
+  MODERATOR
+  MEMBER
 }
 
 enum CollectionVisibility {

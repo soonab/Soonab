@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Prisma, SpaceVisibility } from '@prisma/client';
 
 import SpaceBlocks from '@/components/space/SpaceBlocks';
+import JoinSpaceButton from '@/components/space/JoinSpaceButton';
 import { prisma } from '@/lib/db';
 
 type Visibility = SpaceVisibility;
@@ -159,9 +160,12 @@ export default async function SpaceLayout({
           <div className="rounded-md bg-white p-4 shadow">
             <div className="flex items-center justify-between gap-4">
               <h1 className="text-xl font-semibold text-gray-900">{space.name}</h1>
-              {config.visibility === 'INVITE' ? (
-                <span className="rounded-full border px-2 py-1 text-xs text-gray-700">Friend Space — unlimited posts</span>
-              ) : null}
+              <div className="flex items-center gap-3">
+                {config.visibility === 'INVITE' ? (
+                  <span className="rounded-full border px-2 py-1 text-xs text-gray-700">Friend Space — unlimited posts</span>
+                ) : null}
+                <JoinSpaceButton slug={space.slug} />
+              </div>
             </div>
           </div>
         </div>

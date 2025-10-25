@@ -3,16 +3,18 @@
 import * as React from 'react';
 
 type Props = {
-  path: string;         // e.g. "/c/board-slug" or "/c/board-slug#e-<entryId>"
-  title?: string;       // optional share title
-  compact?: boolean;    // icon-only button
-  label?: string;       // button text (default "Share")
-  className?: string;   // positioning
+  path: string;           // e.g. "/p/abc123" or "/c/slug#e-id"
+  title?: string;         // optional share title/text
+  compact?: boolean;      // icon-only pill
+  label?: string;         // default "Share"
+  className?: string;
+  downloadUrl?: string;   // optional: show "Download" if provided
 };
 
-export default function ShareMenu({ path, title, compact, label = 'Share', className }: Props) {
+export default function ShareMenu({ path, title, compact, label = 'Share', className, downloadUrl }: Props) {
   const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  const [shared, setShared] = React.useState(false);
   const btnRef = React.useRef<HTMLButtonElement | null>(null);
   const popRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -33,10 +35,11 @@ export default function ShareMenu({ path, title, compact, label = 'Share', class
     catch { return window.location.origin + path; }
   }, [path]);
 
-  async function doNativeShare() {
+  async function tryNativeShare() {
     try {
-      if (typeof navigator !== 'undefined' && (navigator as any).share) {
+      if ((navigator as any)?.share) {
         await (navigator as any).share({ title: title || document.title, text: title, url });
+        setShared(true); setTimeout(() => setShared(false), 1200);
         return true;
       }
     } catch {}
@@ -44,7 +47,7 @@ export default function ShareMenu({ path, title, compact, label = 'Share', class
   }
 
   async function onClick() {
-    const ok = await doNativeShare();
+    const ok = await tryNativeShare();
     if (!ok) setOpen((v) => !v);
   }
 
@@ -58,6 +61,14 @@ export default function ShareMenu({ path, title, compact, label = 'Share', class
       }
       setCopied(true); setTimeout(() => setCopied(false), 1200);
     } catch {}
+  }
+
+  async function shareVia() {
+    const ok = await tryNativeShare();
+    if (!ok) {
+      // As a fallback, open default OS share handlers where supported (best-effort)
+      window.open(url, '_blank', 'noopener');
+    }
   }
 
   return (
@@ -75,17 +86,29 @@ export default function ShareMenu({ path, title, compact, label = 'Share', class
         title="Share"
       >
         <ShareIcon />
-        {!compact && <span>{label}</span>}
+        {!compact && <span>{shared ? 'Shared!' : label}</span>}
       </button>
 
       {open && (
-        <div ref={popRef} role="menu" className="absolute right-0 z-[70] mt-2 w-44 rounded-lg bg-white shadow-lg ring-1 ring-black/10 p-1">
+        <div
+          ref={popRef}
+          role="menu"
+          className="absolute right-0 z-[70] mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black/10 p-1"
+        >
           <button className="w-full text-left rounded-md px-3 py-2 text-[13px] hover:bg-[color:var(--ink-50)]" onClick={copyLink}>
             {copied ? 'Copied!' : 'Copy link'}
+          </button>
+          <button className="w-full text-left rounded-md px-3 py-2 text-[13px] hover:bg-[color:var(--ink-50)]" onClick={shareVia}>
+            Share via…
           </button>
           <a className="block rounded-md px-3 py-2 text-[13px] hover:bg-[color:var(--ink-50)]" href={url} target="_blank" rel="noopener noreferrer">
             Open link
           </a>
+          {downloadUrl && (
+            <a className="block rounded-md px-3 py-2 text-[13px] hover:bg-[color:var(--ink-50)]" href={downloadUrl} download>
+              Download
+            </a>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,8 @@
 'use client';
 import * as React from 'react';
 
+import DiscoverSpacesCard from '@/components/discover/DiscoverSpacesCard';
+
 export default function SidebarRight() {
   return (
     <div className="rail">
@@ -14,24 +16,7 @@ export default function SidebarRight() {
         </div>
       </div>
 
-      {/* Discover Spaces (glass style) */}
-      <div className="glass p-4">
-        <h3 className="mb-2 font-semibold">Discover Spaces</h3>
-
-        <div className="mini-avatars mb-3">
-          <img src="/icons/placeholder.png" alt="" />
-          <img src="/icons/placeholder.png" alt="" />
-          <img src="/icons/placeholder.png" alt="" />
-        </div>
-
-        <div className="text-sm text-[color:var(--ink-700)]">
-          <div className="mb-2">
-            <span className="font-medium">From "Design Inspiration" Feed</span>
-            <span> — hosted by <a className="underline" href="/s/tech_lead">@tech_lead</a></span>
-          </div>
-          <button className="btn-ghost">View all</button>
-        </div>
-      </div>
+      <DiscoverSpacesCard />
 
       {/* Featured Spaces */}
       <div className="panel p-4">
